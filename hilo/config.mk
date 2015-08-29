@@ -37,7 +37,7 @@
 
 
 # project name
-THIS = twig
+THIS = hilo
 
 # Path to top level ASF directory relative to this project directory.
 PRJ_PATH = ../xdk-asf-3.17.0

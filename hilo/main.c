@@ -65,6 +65,15 @@ u8 key_count = 0;
 
 const u8 outs[8] = {B00, B01, B02, B03, B04, B05, B06, B07};
 
+// basic structure
+//
+// 8 tracks
+// 64 steps per track (arranged as 8 groups of 8 steps)
+// 8 sub positions per step (bits in a u8)
+//
+// - 8 mutes (one per track)
+// - 1 play head (could this be expanded to one per track?)
+//
 
 typedef struct {
 	s8 positions[8];
@@ -137,14 +146,9 @@ void flash_write(void);
 void flash_read(void);
 
 
-static void twig_process_ii(uint8_t i, int d);
+static void hilo_process_ii(uint8_t i, int d);
 
 
-//static void cascades_trigger(u8 n);
-
-
-
-////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -153,7 +157,7 @@ static void twig_process_ii(uint8_t i, int d);
 void clock(u8 phase) {
 	//static u8 i;
 
-	if(phase) {
+	if (phase) {
 		gpio_set_gpio_pin(B10);
 
 		// // clear last round
@@ -230,7 +234,7 @@ static void monome_poll_timer_callback(void* obj) {
 
 // monome refresh callback
 static void monome_refresh_timer_callback(void* obj) {
-	if(monomeFrameDirty > 0) {
+	if (monomeFrameDirty > 0) {
 		static event_t e;
 		e.type = kEventMonomeRefresh;
 		event_post(&e);
@@ -239,14 +243,14 @@ static void monome_refresh_timer_callback(void* obj) {
 
 // monome: start polling
 void timers_set_monome(void) {
-	timer_add(&monomePollTimer, 20, &monome_poll_timer_callback, NULL );
-	timer_add(&monomeRefreshTimer, 30, &monome_refresh_timer_callback, NULL );
+	timer_add(&monomePollTimer, 20, &monome_poll_timer_callback, NULL);
+	timer_add(&monomeRefreshTimer, 30, &monome_refresh_timer_callback, NULL);
 }
 
 // monome stop polling
 void timers_unset_monome(void) {
-	timer_remove( &monomePollTimer );
-	timer_remove( &monomeRefreshTimer ); 
+	timer_remove(&monomePollTimer);
+	timer_remove(&monomeRefreshTimer); 
 }
 
 
@@ -667,7 +671,7 @@ static void refresh_preset() {
 // }
 // 
 
-static void twig_process_ii(uint8_t i, int d) {
+static void hilo_process_ii(uint8_t i, int d) {
 	// switch(i) {
 	// 	case MP_PRESET:
 	// 		if(d<0 || d>7)
@@ -820,7 +824,7 @@ int main(void) {
 
 	init_i2c_slave(0x30);
 
-	print_dbg("\r\n\n// twig //////////////////////////////// ");
+	print_dbg("\r\n\n// hilo //////////////////////////////// ");
 	print_dbg_ulong(sizeof(flashy));
 
 	print_dbg(" ");
@@ -865,7 +869,7 @@ int main(void) {
 
 	re = &refresh;
 
-	process_ii = &twig_process_ii;
+	process_ii = &hilo_process_ii;
 
 	clock_pulse = &clock;
 	clock_external = !gpio_get_pin_value(B09);
