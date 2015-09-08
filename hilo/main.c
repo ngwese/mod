@@ -50,6 +50,9 @@
 #define NUM_PAGES     8
 #define NUM_STEPS    64
 
+#define FIRST_PAGE    0
+#define LAST_PAGE     7
+
 // s8 positions[8] = {3,1,2,2,3,3,5,7};
 // s8 points[8] = {3,1,2,2,3,3,5,7};
 // s8 points_save[8] = {3,1,2,2,3,3,5,7};
@@ -86,6 +89,7 @@ const u8 outs[8] = {B00, B01, B02, B03, B04, B05, B06, B07};
 typedef struct {
 	u8 trigs[NUM_TRACKS][NUM_STEPS];  // 8 tracks, 8 groups * 8 steps
 	u8 flags[NUM_TRACKS];      // bitfield containing track level mutes, freezes, etc
+	u8 selected_page, in_page, out_page;
 } hl_set;
 
 typedef const struct {
@@ -97,15 +101,17 @@ typedef const struct {
 
 hl_set s;
 
-u8 selected_page;     // active offset into trigs
-u8 in_page, out_page;      // loop length; 8, 16, 32, 64?
+//u8 selected_page = FIRST_PAGE;      // active offset into trigs
+//u8 in_page = FIRST_PAGE;
+//u8 out_page = LAST_PAGE;  // 
+bool follow = true;           // selected follows play head
 
 u8 preset_mode, preset_select, front_timer;
 u8 glyph[8];
 
-volatile u8 position;  // playhead position: [0,63]
-volatile u8 page;      // position / 8: [0,7]
-volatile u8 step;      // position % 8; [0,7]
+volatile u8 position = 0;  // playhead position: [0,63]
+volatile u8 page = 0;      // position / 8: [0,7]
+volatile u8 step = 0;      // position % 8; [0,7]
 
 u8 clock_phase;
 u16 clock_time, clock_temp;
@@ -216,6 +222,12 @@ void clock(u8 phase) {
 		// 	if(m.triggers[i] && !m.mutes[i])
 		// 		gpio_set_gpio_pin(outs[i]);
 		// }
+		
+		for (u8 t = 0; t < NUM_TRACKS; t++) {
+			if (s.trigs[t][position]) {
+				gpio_set_gpio_pin(outs[t]);
+			}
+		}
 
 		//monomeFrameDirty++;  // because the position changed (among other things)
 		//monomeFrameDirty |= 0b0010; // mark quad 2 (trigs) as dirty
@@ -224,31 +236,34 @@ void clock(u8 phase) {
 		//monomeFrameDirty |= 0b0001; // mark quad 1 (ctrl) as dirty
 	}
 	else {
-		for (u8 i = 0; i < 8; i++)
+		for (u8 i = 0; i < 8; i++) {
 			gpio_clr_gpio_pin(outs[i]);
-
+		}
 		gpio_clr_gpio_pin(B10);
  	}
 }
 
 inline static void position_set(u8 p) {
-	position = p % 64;
-	page = position / 8;
-	step = position % 8;
+	position = p % NUM_STEPS;
+	page = position / PAGE_SIZE;
+	step = position % PAGE_SIZE;
+	if (follow) s.selected_page = page;
 	//print_dbg("\r\nposition (set): ");
 	//print_dbg_ulong(position);
 }
 
 inline static void position_advance(s8 delta) {
-	position = (position + delta) % 64; //64;
-	page = position / 8;
-	step = position % 8;
- // 	print_dbg("\r\nposition (adv): ");
-	// print_dbg_ulong(position);
-	// print_dbg("; pg: "); 
-	// print_dbg_ulong(page); 
-	// print_dbg("; st: "); 
-	// print_dbg_ulong(step);
+	u8 new_pos = (position + delta) % NUM_STEPS;
+	u8 out_pos = (s.out_page + 1) * PAGE_SIZE; // range [8, 64]
+	u8 in_pos;
+	if (new_pos >= out_pos) {  // check this; off by one?
+		in_pos = s.in_page * PAGE_SIZE;
+		position_set(in_pos + (new_pos - out_pos));
+	}
+	else {
+		position_set(new_pos);
+	}
+	// TODO: handle backwards looping
 }
 
 static void set_clear(hl_set *s) {
@@ -259,6 +274,9 @@ static void set_clear(hl_set *s) {
 			s->trigs[i][st] = 0;
 		}
 	}
+	s->selected_page = FIRST_PAGE;
+	s->in_page = FIRST_PAGE;
+	s->out_page = LAST_PAGE;
 }
 
 inline static void trig_toggle(u8 track, u8 page, u8 step) {
@@ -490,11 +508,25 @@ static void handler_MonomeGridKey(s32 data) {
 		monomeFrameDirty++;
 	}
 	else if (x == COLUMN_PAGE) {
+		static bool selection_held = false;
 		if (z) {
-			print_dbg("\r\n mute press");
-			selected_page = y;
+			print_dbg("\r\n column press");
+			if (selection_held && y != s.selected_page) {
+				s.in_page = s.selected_page;
+				s.out_page = y;
+				selection_held = false;
+				follow = true;
+			}
+			else {
+				s.selected_page = y;
+				selection_held = true;
+				follow = false;
+			}
 			monomeFrameDirty++;
 		}	
+		else if (y == s.selected_page) {
+			selection_held = false; // lifted on same key_count
+		}
 	}
 	else {
 		print_dbg("\r\n ctrl press");
@@ -631,7 +663,7 @@ static void handle_trig_press_8x8(u8 x, u8 y, u8 z) {
 		// print_dbg( " flip p: ");
 		// print_dbg_ulong(p);
 		// s.trigs[x][p] ^= 1; // toggle
-		trig_toggle(y, selected_page, x);
+		trig_toggle(y, s.selected_page, x);
 		// print_dbg(" t: ");
 		// print_dbg_ulong(s.trigs[y][p]);
 	}
@@ -737,10 +769,10 @@ static void refresh_trig_8x8(void) {
 	u32 led;
 	// scrolling view; pages of 8...
 	for (t = 0; t < NUM_TRACKS; t++) {
-		start = t * 16 + COLUMN_TRACK;
+		//tart = t * 16 + COLUMN_TRACK;
 		// draw the trigs for one track
-	 	in = selected_page * 8; // starting offset into trigs
-		for (i = 0; i < 8; i++) {
+	 	in = s.selected_page * PAGE_SIZE; // starting offset into trigs
+		for (i = 0; i < PAGE_SIZE; i++) {
 			led = monome_xy_idx(COLUMN_TRACK + i, t);
 			if (s.trigs[t][in + i])
 				monomeLedBuffer[led] = L1;
@@ -748,7 +780,7 @@ static void refresh_trig_8x8(void) {
 				monomeLedBuffer[led] = 0;
 		}		
 
-		if (page == selected_page) {
+		if (page == s.selected_page) {
 			// draw the playhead for one track
 				monome_led_set(COLUMN_TRACK + step, t, L2);
 		}	
@@ -766,7 +798,8 @@ static void refresh_trig_vert(void) {
 
 
 static void refresh_ctrl_home(void) {
-	u8 v;
+	u8 v, p;
+	bool show_loop = true;
 	
 	// mutes column
 	for (u8 m = 0; m < NUM_TRACKS; m++) {
@@ -774,12 +807,15 @@ static void refresh_ctrl_home(void) {
 	}
 	
 	// handle page control
-	for (u8 p = 0; p < NUM_PAGES; p++) {
-		if (p == selected_page) v = L2; // bright
-		else if (p == page)			v = L1; // less bright
-		else                    v = 0;
-		monome_led_set(COLUMN_PAGE, p, v);
+	for (p = 0; p < NUM_PAGES; p++) 
+		monome_led_set(COLUMN_PAGE, p, 0);
+	// show the loop points	
+	if (s.in_page != FIRST_PAGE || s.out_page != LAST_PAGE) {
+		for (p = s.in_page; p <= s.out_page; p++)
+			monome_led_set(COLUMN_PAGE, p, L0);
 	}
+	monome_led_set(COLUMN_PAGE, page, L1);
+	monome_led_set(COLUMN_PAGE, s.selected_page, L2);
 }
 
 // application grid redraw without varibright
@@ -983,6 +1019,10 @@ void flash_read(void) {
 
 	print_dbg("\r\n read preset ");
 	print_dbg_ulong(preset_select);
+	
+	// TODO: reset position, page, and step????
+	
+	
 	// 
 	// for(i1=0;i1<8;i1++) {
 	// 	m.positions[i1] = flashy.m[preset_select].positions[i1];
@@ -1079,7 +1119,8 @@ int main(void) {
 	timer_add(&adcTimer, 100, &adcTimer_callback, NULL);
 	clock_temp = 10000; // out of ADC range to force tempo
 	
-	selected_page = 0;
+	s.selected_page = FIRST_PAGE;
+	follow = true;
 
 	while(true) {
 		check_events();
