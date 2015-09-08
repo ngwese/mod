@@ -93,7 +93,8 @@
 #define USART_IRQ                   AVR32_USART1_IRQ
 #define USART_IRQ_GROUP             AVR32_USART1_IRQ_GROUP
 #define USART_SYSCLK                SYSCLK_USART1
-#define USART_BAUDRATE 				57600
+#define USART_BAUDRATE 				      115200  // was: 57600 
+//#define USART_BAUDRATE 				      57600  // was: 57600 
 
 
 /// compatibility with ASF print funcs

@@ -39,8 +39,16 @@
 #define FIRSTRUN_KEY 0x22
 
 #define L2 12
-#define L1 8
+#define L1 7
 #define L0 4
+
+#define COLUMN_PAGE   6
+#define COLUMN_MUTE   7
+#define COLUMN_TRACK  8
+#define NUM_TRACKS    8
+#define PAGE_SIZE     8
+#define NUM_PAGES     8
+#define NUM_STEPS    64
 
 // s8 positions[8] = {3,1,2,2,3,3,5,7};
 // s8 points[8] = {3,1,2,2,3,3,5,7};
@@ -76,28 +84,28 @@ const u8 outs[8] = {B00, B01, B02, B03, B04, B05, B06, B07};
 //
 
 typedef struct {
-	s8 positions[8];
-	s8 points[8];
-	s8 points_save[8];
-	u8 triggers[8];
-	u8 trig_dests[8];
-	u8 rules[8];
-	u8 rule_dests[8];
-	u8 mutes[8];
-	u8 freezes[8];
-} mp_set;
+	u8 trigs[NUM_TRACKS][NUM_STEPS];  // 8 tracks, 8 groups * 8 steps
+	u8 flags[NUM_TRACKS];      // bitfield containing track level mutes, freezes, etc
+} hl_set;
 
 typedef const struct {
 	u8 fresh;
 	u8 preset_select;
 	u8 glyph[8][8];
-	mp_set m[8];
+	hl_set sets[8];
 } nvram_data_t;
 
-mp_set m;
+hl_set s;
+
+u8 selected_page;     // active offset into trigs
+u8 in_page, out_page;      // loop length; 8, 16, 32, 64?
 
 u8 preset_mode, preset_select, front_timer;
 u8 glyph[8];
+
+volatile u8 position;  // playhead position: [0,63]
+volatile u8 page;      // position / 8: [0,7]
+volatile u8 step;      // position % 8; [0,7]
 
 u8 clock_phase;
 u16 clock_time, clock_temp;
@@ -107,9 +115,15 @@ u8 SIZE, LENGTH, VARI;
 
 u8 held_keys[32], key_times[256];
 
+// TODO: refresh functions pointer? give better name
 typedef void(*re_t)(void);
 re_t re;
+re_t refresh_trig;
+re_t refresh_ctrl;
 
+typedef void(*kph_t)(u8 x, u8 y, u8 z);
+kph_t handle_trig_press;
+kph_t handle_ctrl_press;
 
 // NVRAM data structure located in the flash array.
 __attribute__((__section__(".flash_nvram")))
@@ -124,7 +138,23 @@ static nvram_data_t flashy;
 static void refresh(void);
 static void refresh_mono(void);
 static void refresh_preset(void);
+
+static void refresh_trig_8x8(void);
+static void refresh_trig_4x16(void);
+static void refresh_trig_1x64(void);
+static void refresh_trig_vert(void);
+static void refresh_trig_clear(void);
+
+static void refresh_ctrl_home(void);
+
 static void clock(u8 phase);
+
+static void position_set(u8 p);
+static void position_advance(s8 step);
+
+static void set_clear(hl_set *s);
+static void trig_toggle(u8 track, u8 page, u8 step);
+static void trig_clear(u8 track, u8 page, u8 step);
 
 // start/stop monome polling/refresh timers
 extern void timers_set_monome(void);
@@ -139,6 +169,11 @@ static void handler_KeyTimer(s32 data);
 static void handler_Front(s32 data);
 static void handler_ClockNormal(s32 data);
 
+// 
+static void handle_null_press(u8 x, u8 y, u8 z);
+static void handle_trig_press_2x16(u8 x, u8 y, u8 z);
+static void handle_trig_press_1x64(u8 x, u8 y, u8 z);
+static void handle_trig_press_vert(u8 x, u8 y, u8 z);
 
 u8 flash_is_fresh(void);
 void flash_unfresh(void);
@@ -160,6 +195,8 @@ void clock(u8 phase) {
 	if (phase) {
 		gpio_set_gpio_pin(B10);
 
+		position_advance(1);
+
 		// // clear last round
 		// for(i=0;i<8;i++)
 		// 	m.triggers[i] = 0;
@@ -180,15 +217,66 @@ void clock(u8 phase) {
 		// 		gpio_set_gpio_pin(outs[i]);
 		// }
 
-		monomeFrameDirty++;
+		//monomeFrameDirty++;  // because the position changed (among other things)
+		//monomeFrameDirty |= 0b0010; // mark quad 2 (trigs) as dirty
+		monome_set_quadrant_flag(1);
+		monome_set_quadrant_flag(0);
+		//monomeFrameDirty |= 0b0001; // mark quad 1 (ctrl) as dirty
 	}
 	else {
-		// for(i=0;i<8;i++) gpio_clr_gpio_pin(outs[i]);
+		for (u8 i = 0; i < 8; i++)
+			gpio_clr_gpio_pin(outs[i]);
 
 		gpio_clr_gpio_pin(B10);
  	}
 }
 
+inline static void position_set(u8 p) {
+	position = p % 64;
+	page = position / 8;
+	step = position % 8;
+	//print_dbg("\r\nposition (set): ");
+	//print_dbg_ulong(position);
+}
+
+inline static void position_advance(s8 delta) {
+	position = (position + delta) % 64; //64;
+	page = position / 8;
+	step = position % 8;
+ // 	print_dbg("\r\nposition (adv): ");
+	// print_dbg_ulong(position);
+	// print_dbg("; pg: "); 
+	// print_dbg_ulong(page); 
+	// print_dbg("; st: "); 
+	// print_dbg_ulong(step);
+}
+
+static void set_clear(hl_set *s) {
+	u8 i, st;
+	for (i = 0; i < NUM_TRACKS; i++) {
+		s->flags[i] = 0;
+		for (st = 0; st < NUM_STEPS; st++) {
+			s->trigs[i][st] = 0;
+		}
+	}
+}
+
+inline static void trig_toggle(u8 track, u8 page, u8 step) {
+	print_dbg("\r\n trig_toggle;");
+	print_dbg(" tk: "); 
+	print_dbg_ulong(track); 
+	print_dbg(" pg: "); 
+	print_dbg_ulong(page); 
+	print_dbg(" st: ");
+	print_dbg_ulong(step);
+	u8 v = s.trigs[track][page * PAGE_SIZE + step] ^= 1; 
+	print_dbg(" v: ");
+	print_dbg_ulong(v);
+}
+
+inline static void trig_clear(u8 track, u8 page, u8 step) {
+	s.trigs[track][page * PAGE_SIZE + step] = 0;
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -320,11 +408,14 @@ static void handler_PollADC(s32 data) {
 	// CLOCK POT INPUT
 	i = adc[0];
 	i = i>>2;
-	if(i != clock_temp) {
+	if (i != clock_temp) {
 		// 500ms - 12ms
 		clock_time = 12500 / (i + 25);
-		print_dbg("\r\nclock (ms): ");
-		print_dbg_ulong(clock_time);
+		// FIXME: there seems to be a decent amount of noise from the front pot
+		// so the timer interval is being changed possibly introducing some
+		// jitter. Should we filter?
+		//print_dbg("\r\n clock (ms): ");
+		//print_dbg_ulong(clock_time);
 
 		timer_set(&clockTimer, clock_time);
 	}
@@ -363,7 +454,7 @@ static void handler_KeyTimer(s32 data) {
 					}
 				}
 
-				print_dbg("\rlong press: "); 
+				print_dbg("\r long press: "); 
 				print_dbg_ulong(held_keys[i1]);
 			}
 		}
@@ -385,12 +476,30 @@ static void handler_MonomeGridKey(s32 data) {
 	u8 x, y, z; //, index, i1, found;
 	monome_grid_key_parse_event_data(data, &x, &y, &z);
 	print_dbg("\r\n monome event; x: "); 
-	print_dbg_hex(x); 
-	print_dbg("; y: 0x"); 
-	print_dbg_hex(y); 
+	print_dbg_ulong(x); 
+	print_dbg("; y: "); 
+	print_dbg_ulong(y); 
 	print_dbg("; z: 0x"); 
 	print_dbg_hex(z);
 
+	if (x > COLUMN_MUTE) {
+		(*handle_trig_press)(x - (COLUMN_MUTE + 1), y, z); // position in first quad
+	}
+	else if (x == COLUMN_MUTE) {
+		print_dbg("\r\n mute press");
+		monomeFrameDirty++;
+	}
+	else if (x == COLUMN_PAGE) {
+		if (z) {
+			print_dbg("\r\n mute press");
+			selected_page = y;
+			monomeFrameDirty++;
+		}	
+	}
+	else {
+		print_dbg("\r\n ctrl press");
+		(*handle_ctrl_press)(x, y, z);
+	}
 	//// TRACK LONG PRESSES
 	// index = y*16 + x;
 	// if(z) {
@@ -509,14 +618,52 @@ static void handler_MonomeGridKey(s32 data) {
 	// }
 }
 
+static void handle_null_press(u8 x, u8 y, u8 z) {}
+
+static void handle_trig_press_8x8(u8 x, u8 y, u8 z) {	
+	if (z) {
+		// print_dbg("\r\n handle_trig_press_8x8 (down);");
+		// print_dbg(" x: "); 
+		// print_dbg_ulong(x); 
+		// print_dbg(" y: "); 
+		// print_dbg_ulong(y); 
+		// u8 p = selected_page * 8 + x;
+		// print_dbg( " flip p: ");
+		// print_dbg_ulong(p);
+		// s.trigs[x][p] ^= 1; // toggle
+		trig_toggle(y, selected_page, x);
+		// print_dbg(" t: ");
+		// print_dbg_ulong(s.trigs[y][p]);
+	}
+}
+
+static void handle_trig_press_2x16(u8 x, u8 y, u8 z) {
+	print_dbg("\r\n handle_trig_press_2x16");
+}
+
+static void handle_trig_press_1x64(u8 x, u8 y, u8 z) {	
+	print_dbg("\r\n handle_trig_press_1x64");
+}
+
+static void handle_trig_press_vert(u8 x, u8 y, u8 z) {	
+	print_dbg("\r\n handle_trig_press_vert");
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // application grid redraw
-static void refresh() {
-	// u8 i1, i2, i3;
-	// 
-	// // clear grid
-	// for(i1=0;i1<128;i1++)
+
+
+static void refresh(void) {
+	//u8 i1, i2, i3;
+	 
+	// clear grid
+	// for (i1 = 0; i1 < 128; i1++)
 	// 	monomeLedBuffer[i1] = 0;
+
+	(*refresh_trig)();
+	(*refresh_ctrl)();
+
+	// 	
 	// 
 	// // SET POSITIONS
 	// if(mode == 0) {
@@ -576,9 +723,67 @@ static void refresh() {
 	// monome_set_quadrant_flag(1);
 }
 
+static void refresh_null(void) {}
+
+static void refresh_trig_clear(void) {
+	// TODO: do this with fewer ops
+	for (u8 x = 8; x < 16; x++)
+		for (u8 y = 0; y < 8; y++)
+			monomeLedBuffer[x + y] = 0;
+}
+
+static void refresh_trig_8x8(void) {
+	u8 i, t, start, in;
+	u32 led;
+	// scrolling view; pages of 8...
+	for (t = 0; t < NUM_TRACKS; t++) {
+		start = t * 16 + COLUMN_TRACK;
+		// draw the trigs for one track
+	 	in = selected_page * 8; // starting offset into trigs
+		for (i = 0; i < 8; i++) {
+			led = monome_xy_idx(COLUMN_TRACK + i, t);
+			if (s.trigs[t][in + i])
+				monomeLedBuffer[led] = L1;
+			else
+				monomeLedBuffer[led] = 0;
+		}		
+
+		if (page == selected_page) {
+			// draw the playhead for one track
+				monome_led_set(COLUMN_TRACK + step, t, L2);
+		}	
+	}
+}
+
+static void refresh_trig_4x16(void) {
+}
+
+static void refresh_trig_1x64(void) {
+}
+
+static void refresh_trig_vert(void) {
+}
+
+
+static void refresh_ctrl_home(void) {
+	u8 v;
+	
+	// mutes column
+	for (u8 m = 0; m < NUM_TRACKS; m++) {
+		monome_led_set(COLUMN_MUTE, m, L0); // TODO: implement flags
+	}
+	
+	// handle page control
+	for (u8 p = 0; p < NUM_PAGES; p++) {
+		if (p == selected_page) v = L2; // bright
+		else if (p == page)			v = L1; // less bright
+		else                    v = 0;
+		monome_led_set(COLUMN_PAGE, p, v);
+	}
+}
 
 // application grid redraw without varibright
-static void refresh_mono() {
+static void refresh_mono(void) {
 	// TODO: this isn't going to work, fix or remove support
 	refresh();
 }
@@ -766,9 +971,9 @@ void flash_unfresh(void) {
 }
 
 void flash_write(void) {
-	print_dbg("\r write preset ");
+	print_dbg("\r\n write preset: ");
 	print_dbg_ulong(preset_select);
-	flashc_memcpy((void *)&flashy.m[preset_select], &m, sizeof(m), true);
+	flashc_memcpy((void *)&flashy.sets[preset_select], &s, sizeof(s), true);
 	flashc_memcpy((void *)&flashy.glyph[preset_select], &glyph, sizeof(glyph), true);
 	flashc_memset8((void*)&(flashy.preset_select), preset_select, 1, true);
 }
@@ -802,7 +1007,7 @@ void flash_read(void) {
 
 
 int main(void) {
-	//u8 i1;
+	u8 i1;
 
 	sysclk_init();
 
@@ -828,44 +1033,39 @@ int main(void) {
 	print_dbg_ulong(sizeof(flashy));
 
 	print_dbg(" ");
-	print_dbg_ulong(sizeof(m));
+	print_dbg_ulong(sizeof(s));
 
 	if (flash_is_fresh()) {
 		print_dbg("\r\nfirst run.");
 		flash_unfresh();
 		flashc_memset32((void*)&(flashy.preset_select), 0, 4, true);
 
-		// clear out some reasonable defaults
-		// for(i1=0;i1<8;i1++) {
-		// 	m.positions[i1] = i1;
-		// 	m.points[i1] = i1;
-		// 	m.points_save[i1] = i1;
-		// 	m.triggers[i1] = 0;
-		// 	m.trig_dests[i1] = 0;
-		// 	m.rules[i1] = 0;
-		// 	m.rule_dests[i1] = i1;
-		// }
-		// 
-		// m.positions[0] = m.points[0] = 3;
-		// m.trig_dests[0] = 254;
-		// 
-		// // save all presets, clear glyphs
-		// for(i1=0;i1<8;i1++) {
-		// 	flashc_memcpy((void *)&flashy.m[i1], &m, sizeof(m), true);
-		// 	glyph[i1] = (1<<i1);
-		// 	flashc_memcpy((void *)&flashy.glyph[i1], &glyph, sizeof(glyph), true);
-		// }
+		// clear out the active set
+		set_clear(&s);
+		
+		// init all presets to current set
+		for (i1 = 0; i1 < 8; i1++) {
+			flashc_memcpy((void *)&flashy.sets[i1], &s, sizeof(s), true);
+			glyph[i1] = (1<<i1);
+			flashc_memcpy((void *)&flashy.glyph[i1], &glyph, sizeof(glyph), true);
+	 	}
 	}
 	else {
 		// load from flash at startup
 		preset_select = flashy.preset_select;
 		flash_read();
-		// for(i1=0;i1<8;i1++)
-		// 	glyph[i1] = flashy.glyph[preset_select][i1];
+		for (i1 = 0; i1 < 8; i1++)
+			glyph[i1] = flashy.glyph[preset_select][i1];
 	}
 
 	LENGTH = 15;
 	SIZE = 16;
+
+	handle_trig_press = &handle_trig_press_8x8;
+	refresh_trig = &refresh_trig_8x8;
+	
+	handle_ctrl_press = &handle_null_press;
+	refresh_ctrl = &refresh_ctrl_home;
 
 	re = &refresh;
 
@@ -874,12 +1074,14 @@ int main(void) {
 	clock_pulse = &clock;
 	clock_external = !gpio_get_pin_value(B09);
 
-	timer_add(&clockTimer,120,&clockTimer_callback, NULL);
-	timer_add(&keyTimer,50,&keyTimer_callback, NULL);
-	timer_add(&adcTimer,100,&adcTimer_callback, NULL);
+	timer_add(&clockTimer, 120, &clockTimer_callback, NULL);
+	timer_add(&keyTimer, 50, &keyTimer_callback, NULL);
+	timer_add(&adcTimer, 100, &adcTimer_callback, NULL);
 	clock_temp = 10000; // out of ADC range to force tempo
+	
+	selected_page = 0;
 
-	while (true) {
+	while(true) {
 		check_events();
 	}
 }
