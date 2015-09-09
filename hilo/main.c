@@ -161,6 +161,9 @@ static void position_advance(s8 step);
 static void set_clear(hl_set *s);
 static void trig_toggle(u8 track, u8 page, u8 step);
 static void trig_clear(u8 track, u8 page, u8 step);
+static void track_mute_set(u8 track, bool mute);
+static void track_mute_toggle(u8 track);
+static bool track_mute_enabled(u8 track);
 
 // start/stop monome polling/refresh timers
 extern void timers_set_monome(void);
@@ -224,7 +227,7 @@ void clock(u8 phase) {
 		// }
 		
 		for (u8 t = 0; t < NUM_TRACKS; t++) {
-			if (s.trigs[t][position]) {
+			if (s.trigs[t][position] && !track_mute_enabled(t)) {
 				gpio_set_gpio_pin(outs[t]);
 			}
 		}
@@ -243,7 +246,7 @@ void clock(u8 phase) {
  	}
 }
 
-inline static void position_set(u8 p) {
+static void position_set(u8 p) {
 	position = p % NUM_STEPS;
 	page = position / PAGE_SIZE;
 	step = position % PAGE_SIZE;
@@ -252,7 +255,7 @@ inline static void position_set(u8 p) {
 	//print_dbg_ulong(position);
 }
 
-inline static void position_advance(s8 delta) {
+static void position_advance(s8 delta) {
 	u8 new_pos = (position + delta) % NUM_STEPS;
 	u8 out_pos = (s.out_page + 1) * PAGE_SIZE; // range [8, 64]
 	u8 in_pos;
@@ -294,6 +297,23 @@ inline static void trig_toggle(u8 track, u8 page, u8 step) {
 
 inline static void trig_clear(u8 track, u8 page, u8 step) {
 	s.trigs[track][page * PAGE_SIZE + step] = 0;
+}
+
+static void track_mute_set(u8 track, bool mute) {
+	if (mute) {
+		s.flags[track] |= 0b0001;
+	}
+	else {
+		s.flags[track] &= 0b1110;
+	}
+}
+
+static void track_mute_toggle(u8 track) {
+	track_mute_set(track, !track_mute_enabled(track));
+}
+
+static bool track_mute_enabled(u8 track) {
+	return s.flags[track] & 0b0001;
 }
 
 
@@ -491,7 +511,7 @@ static void handler_ClockNormal(s32 data) {
 // application grid code
 
 static void handler_MonomeGridKey(s32 data) { 
-	u8 x, y, z; //, index, i1, found;
+	u8 x, y, z, index, i1, found;
 	monome_grid_key_parse_event_data(data, &x, &y, &z);
 	print_dbg("\r\n monome event; x: "); 
 	print_dbg_ulong(x); 
@@ -500,154 +520,88 @@ static void handler_MonomeGridKey(s32 data) {
 	print_dbg("; z: 0x"); 
 	print_dbg_hex(z);
 
-	if (x > COLUMN_MUTE) {
-		(*handle_trig_press)(x - (COLUMN_MUTE + 1), y, z); // position in first quad
-	}
-	else if (x == COLUMN_MUTE) {
-		print_dbg("\r\n mute press");
-		monomeFrameDirty++;
-	}
-	else if (x == COLUMN_PAGE) {
-		static bool selection_held = false;
-		if (z) {
-			print_dbg("\r\n column press");
-			if (selection_held && y != s.selected_page) {
-				s.in_page = s.selected_page;
-				s.out_page = y;
-				selection_held = false;
-				follow = true;
+	//// TRACK LONG PRESSES
+	index = y*16 + x;
+	if (z) {
+		held_keys[key_count] = index;
+		key_count++;
+		key_times[index] = 10;		//// THRESHOLD key hold time
+	} else {
+		found = 0; // "found"
+		for(i1 = 0; i1<key_count; i1++) {
+			if(held_keys[i1] == index) 
+				found++;
+			if(found) 
+				held_keys[i1] = held_keys[i1+1];
+		}
+		key_count--;
+
+		// FAST PRESS
+		if (key_times[index] > 0) {
+			if (preset_mode == 1) {
+				if (x == 0 && y != preset_select) {
+					preset_select = y;
+					for (i1 = 0; i1 < 8; i1++)
+						glyph[i1] = flashy.glyph[preset_select][i1];
+				}
+ 				else if (x == 0 && y == preset_select) {
+					flash_read();
+					preset_mode = 0;
+				}
+				monomeFrameDirty++;	
 			}
-			else {
-				s.selected_page = y;
-				selection_held = true;
-				follow = false;
-			}
-			monomeFrameDirty++;
-		}	
-		else if (y == s.selected_page) {
-			selection_held = false; // lifted on same key_count
+			// print_dbg("\r\nfast press: ");
+			// print_dbg_ulong(index);
+			// print_dbg(": ");
+			// print_dbg_ulong(key_times[index]);
 		}
 	}
-	else {
-		print_dbg("\r\n ctrl press");
-		(*handle_ctrl_press)(x, y, z);
+	
+	// PRESET SCREEN
+	if (preset_mode) {
+		// glyph magic
+		if (z && x > 7) {
+			glyph[y] ^= 1<<(x-8);
+		}
+		monomeFrameDirty++;	
 	}
-	//// TRACK LONG PRESSES
-	// index = y*16 + x;
-	// if(z) {
-	// 	held_keys[key_count] = index;
-	// 	key_count++;
-	// 	key_times[index] = 10;		//// THRESHOLD key hold time
-	// } else {
-	// 	found = 0; // "found"
-	// 	for(i1 = 0; i1<key_count; i1++) {
-	// 		if(held_keys[i1] == index) 
-	// 			found++;
-	// 		if(found) 
-	// 			held_keys[i1] = held_keys[i1+1];
-	// 	}
-	// 	key_count--;
-	// 
-	// 	// FAST PRESS
-	// 	if(key_times[index] > 0) {
-	// 		if(preset_mode == 1) {
-	// 			if(x == 0 && y != preset_select) {
-	// 				preset_select = y;
-	// 				for(i1=0;i1<8;i1++)
-	// 					glyph[i1] = flashy.glyph[preset_select][i1];
-	// 			}
- // 				else if(x==0 && y == preset_select) {
-	// 				flash_read();
-	// 
-	// 				preset_mode = 0;
-	// 			}
-	// 
-	// 			monomeFrameDirty++;	
-	// 		}
-	// 		// print_dbg("\r\nfast press: ");
-	// 		// print_dbg_ulong(index);
-	// 		// print_dbg(": ");
-	// 		// print_dbg_ulong(key_times[index]);
-	// 	}
-	// }
-	// 
-	// // PRESET SCREEN
-	// if(preset_mode) {
-	// 	// glyph magic
-	// 	if(z && x>7) {
-	// 		glyph[y] ^= 1<<(x-8);
-	// 	}
-	// 
-	// 	monomeFrameDirty++;	
-	// }
-	// // NOT PRESET
-	// else {
-	// 
-	// 	prev_mode = mode;
-	// 
-	// 	// mode check
-	// 	if(x == 0) {
-	// 		kcount += (z<<1)-1;
-	// 
-	// 		if(kcount < 0)
-	// 			kcount = 0;
-	// 
-	// 		// print_dbg("\r\nkey count: ");
-	// 		// print_dbg_ulong(kcount);
-	// 
-	// 		if(kcount == 1 && z == 1)
-	// 			mode = 1; 
-	// 		else if(kcount == 0)
-	// 			mode = 0;
-	// 
-	// 		if(z == 1 && mode == 1) {
-	// 			edit_row = y;
-	// 			monomeFrameDirty++;
-	// 		}
-	// 	}
-	// 	else if(x == 1 && mode != 0) {
-	// 		if(mode == 1 && z == 1)
-	// 			mode = 2;
-	// 		else if(mode == 2 && z == 0)
-	// 			mode = 1;
-	// 	}
-	// 	else if(mode == 0 && z == 1) {
-	// 		m.points[y] = x;
-	// 		m.points_save[y] = x;
-	// 		m.positions[y] = x;
-	// 		monomeFrameDirty++;
-	// 	}
-	// 	else if(mode == 1 && z == 1) {
-	// 		if(x > 1 && x < 7) {
-	// 			if(y != edit_row) {    // filter out self-triggering
-	// 				m.trig_dests[edit_row] ^= (1<<y);
-	// 				monomeFrameDirty++;
-	// 			  // post("\ntrig_dests", edit_row, ":", trig_dests[edit_row]);
-	// 			}
-	// 		}
-	// 		else if(x == 15)
-	// 			m.freezes[y] ^= 1;
-	// 		else if(x == 14)
-	// 			m.mutes[y] ^= 1;
-	// 	}
-	// 	else if(mode == 2 && z == 1) {
-	// 		if(x > 1 && x < 7) {
-	// 			m.rule_dests[edit_row] = y;
-	// 			monomeFrameDirty++;
-	// 		  // post("\nrule_dests", edit_row, ":", rule_dests[edit_row]);
-	// 		}
-	// 		else if(x > 6) {
-	// 			m.rules[edit_row] = y;
-	// 			monomeFrameDirty++;
-	// 		  // post("\nrules", edit_row, ":", rules[edit_row]);
-	// 		}
-	// 	}
-	// 
-	// 	if(mode != prev_mode) {
-	// 		monomeFrameDirty++;
-	// 		// post("\nnew mode", mode);
-	// 	}
-	// }
+	else {
+		if (x > COLUMN_MUTE) {
+			(*handle_trig_press)(x - (COLUMN_MUTE + 1), y, z); // position in first quad
+		}
+		else if (x == COLUMN_MUTE) {
+			print_dbg("\r\n mute press");
+			if (z) {
+				track_mute_toggle(y);
+			}
+			monomeFrameDirty++;
+		}
+		else if (x == COLUMN_PAGE) {
+			static bool selection_held = false;
+			if (z) {
+				print_dbg("\r\n column press");
+				if (selection_held && y != s.selected_page) {
+					s.in_page = s.selected_page;
+					s.out_page = y;
+					selection_held = false;
+					follow = true;
+				}
+				else {
+					s.selected_page = y;
+					selection_held = true;
+					follow = false;
+				}
+				monomeFrameDirty++;
+			}	
+			else if (y == s.selected_page) {
+				selection_held = false; // lifted on same key_count
+			}
+		}
+		else {
+			print_dbg("\r\n ctrl press");
+			(*handle_ctrl_press)(x, y, z);
+		}
+	} // not preset mode
 }
 
 static void handle_null_press(u8 x, u8 y, u8 z) {}
@@ -803,7 +757,8 @@ static void refresh_ctrl_home(void) {
 	
 	// mutes column
 	for (u8 m = 0; m < NUM_TRACKS; m++) {
-		monome_led_set(COLUMN_MUTE, m, L0); // TODO: implement flags
+		v = track_mute_enabled(m) ? 0 : L0;
+		monome_led_set(COLUMN_MUTE, m, v); // TODO: implement flags
 	}
 	
 	// handle page control
@@ -826,20 +781,20 @@ static void refresh_mono(void) {
 
 
 static void refresh_preset() {
-	// u8 i1,i2;
-	// 
-	// for(i1=0;i1<128;i1++)
-	// 	monomeLedBuffer[i1] = 0;
-	// 
-	// monomeLedBuffer[preset_select * 16] = 11;
-	// 
-	// for(i1=0;i1<8;i1++)
-	// 	for(i2=0;i2<8;i2++)
-	// 		if(glyph[i1] & (1<<i2))
-	// 			monomeLedBuffer[i1*16+i2+8] = 11;
-	// 
-	// monome_set_quadrant_flag(0);
-	// monome_set_quadrant_flag(1);
+	u8 i1,i2;
+	
+	for(i1=0;i1<128;i1++)
+		monomeLedBuffer[i1] = 0;
+	
+	monomeLedBuffer[preset_select * 16] = 11;
+	
+	for(i1=0;i1<8;i1++)
+		for(i2=0;i2<8;i2++)
+			if(glyph[i1] & (1<<i2))
+				monomeLedBuffer[i1*16+i2+8] = 11;
+	
+	monome_set_quadrant_flag(0);
+	monome_set_quadrant_flag(1);
 }
 
 // 
@@ -1015,24 +970,20 @@ void flash_write(void) {
 }
 
 void flash_read(void) {
-	//u8 i1;
-
 	print_dbg("\r\n read preset ");
 	print_dbg_ulong(preset_select);
 	
 	// TODO: reset position, page, and step????
 	
-	
-	// 
-	// for(i1=0;i1<8;i1++) {
-	// 	m.positions[i1] = flashy.m[preset_select].positions[i1];
-	// 	m.points[i1] = flashy.m[preset_select].points[i1];
-	// 	m.points_save[i1] = flashy.m[preset_select].points_save[i1];
-	// 	m.triggers[i1] = flashy.m[preset_select].triggers[i1];
-	// 	m.trig_dests[i1] = flashy.m[preset_select].trig_dests[i1];
-	// 	m.rules[i1] = flashy.m[preset_select].rules[i1];
-	// 	m.rule_dests[i1] = flashy.m[preset_select].rule_dests[i1];
-	// }
+	for (u8 t = 0; t < NUM_TRACKS; t++) {
+		for (u8 i = 0; i < NUM_STEPS; i++) {
+			s.trigs[t][i] = flashy.sets[preset_select].trigs[t][i];
+		}
+		s.flags[t] = flashy.sets[preset_select].flags[t];
+	}
+	s.selected_page = flashy.sets[preset_select].selected_page;
+	s.in_page = flashy.sets[preset_select].in_page;
+	s.out_page = flashy.sets[preset_select].out_page;
 }
 
 
