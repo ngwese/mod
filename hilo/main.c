@@ -42,6 +42,7 @@
 #define L1 7
 #define L0 4
 
+#define COLUMN_VIEW   0
 #define COLUMN_SELECT 5
 #define COLUMN_PAGE   6
 #define COLUMN_MUTE   7
@@ -91,6 +92,7 @@ typedef enum {
 	eViewVertical = 0,
 	eView8x8,
 	eView4x16,
+	eView2x32,
 	eView1x64
 } view_mode_t;
 
@@ -137,7 +139,7 @@ typedef void(*kph_t)(u8 x, u8 y, u8 z);
 kph_t handle_trig;
 kph_t handle_ctrl;
 
-// NVRAM data structure located in the flash array.
+
 __attribute__((__section__(".flash_nvram")))
 static nvram_data_t flashy;
 
@@ -153,11 +155,14 @@ static void refresh_preset(void);
 
 static void refresh_trig_8x8(void);
 static void refresh_trig_4x16(void);
+static void refresh_trig_2x32(void);
 static void refresh_trig_1x64(void);
 static void refresh_trig_vert(void);
 static void refresh_trig_clear(void);
 
 static void refresh_ctrl_home(void);
+static void refresh_select_control(u8 column, u8 seleted, view_mode_t view);
+static void refresh_radio_column(u8 column, u8 low, u8 high, u8 selected);
 
 static void clock(u8 phase);
 
@@ -189,7 +194,9 @@ static void handler_ClockNormal(s32 data);
 
 // 
 static void handle_null_press(u8 x, u8 y, u8 z);
+static void handle_trig_press_8x8(u8 x, u8 y, u8 z);
 static void handle_trig_press_4x16(u8 x, u8 y, u8 z);
+static void handle_trig_press_2x32(u8 x, u8 y, u8 z);
 static void handle_trig_press_1x64(u8 x, u8 y, u8 z);
 static void handle_trig_press_vert(u8 x, u8 y, u8 z);
 
@@ -597,13 +604,18 @@ static void handler_MonomeGridKey(s32 data) {
 					selection_held = false;
 					follow = true;
 				}
+				else if (y == s.selected_page) {
+					// re-pressed same page, return to follow
+					selection_held = false;
+					follow = true;
+				}
 				else {
 					s.selected_page = y;
 					selection_held = true;
 					follow = false;
 				}
 				monomeFrameDirty++;
-			}	
+			}
 			else if (y == s.selected_page) {
 				selection_held = false; // lifted on same key_count
 			}
@@ -638,6 +650,10 @@ static void handle_trig_press_4x16(u8 x, u8 y, u8 z) {
 	print_dbg("\r\n handle_trig_press_4x16");
 }
 
+static void handle_trig_press_2x32(u8 x, u8 y, u8 z) {
+	print_dbg("\r\n handle_trig_press_2x32");
+}
+
 static void handle_trig_press_1x64(u8 x, u8 y, u8 z) {	
 	//print_dbg("\r\n handle_trig_press_1x64");
 	if (z) {
@@ -651,15 +667,14 @@ static void handle_trig_press_vert(u8 x, u8 y, u8 z) {
 
 static void handle_ctrl_home(u8 x, u8 y, u8 z) {
 	if (x == 0) {
-		if (y > 3 && z) {
+		if (y < 5 && z) {
 			// view buttons
-			view = (view_mode_t)(7 - y);
+			view = (view_mode_t)y;
 			trig_view_set(view);
 			monomeFrameDirty++;
 		}
 	}
 	else if (x == COLUMN_SELECT) {
-		// if (z || (y != selected_track)) {
 		if (z) {
 			selected_track = y;
 			monomeFrameDirty++;
@@ -776,6 +791,9 @@ static void refresh_trig_8x8(void) {
 static void refresh_trig_4x16(void) {
 }
 
+static void refresh_trig_2x32(void) {	
+}
+
 static void refresh_trig_1x64(void) {
 	u8 i;
 	
@@ -799,27 +817,60 @@ static void refresh_trig_vert(void) {
 
 static void trig_view_set(view_mode_t view) {
 	switch (view) {
-		case eViewVertical:
-			refresh_trig = &refresh_trig_vert;
-			handle_trig = &handle_trig_press_vert;
-			break;
-		case eView8x8:
-			refresh_trig = &refresh_trig_8x8;
-			handle_trig = &handle_trig_press_8x8;
-			break;
- 		case eView4x16:
-			refresh_trig = &refresh_trig_4x16;
-			handle_trig = &handle_trig_press_4x16;
-			break;
-		case eView1x64:
-			refresh_trig = &refresh_trig_1x64;
-			handle_trig = &handle_trig_press_1x64;
-			break;
-		default:
-			refresh_trig = &refresh_trig_8x8;
-			handle_trig = &handle_trig_press_8x8;
+	case eViewVertical:
+		refresh_trig = &refresh_trig_vert;
+		handle_trig = &handle_trig_press_vert;
+		break;
+	case eView8x8:
+		refresh_trig = &refresh_trig_8x8;
+		handle_trig = &handle_trig_press_8x8;
+		break;
+	case eView4x16:
+		refresh_trig = &refresh_trig_4x16;
+		handle_trig = &handle_trig_press_4x16;
+		break;
+	case eView2x32:
+		refresh_trig = &refresh_trig_2x32;
+		handle_trig = &handle_trig_press_2x32;
+		break;
+	case eView1x64:
+		refresh_trig = &refresh_trig_1x64;
+		handle_trig = &handle_trig_press_1x64;
+		break;
+	default:
+		refresh_trig = &refresh_trig_8x8;
+		handle_trig = &handle_trig_press_8x8;
 	}
 }
+
+static void refresh_select_control(u8 column, u8 selected, view_mode_t view) {
+	u8 i, start, stop;
+	switch (view) {
+	case eView4x16:
+		start = (selected >> 1) * 2;
+		stop = start + 2;
+		break;
+	case eView2x32:
+		start = (selected >> 2) * 4;
+		stop = start + 4;
+		break;
+	default: // eView1x64 || eViewVertical || eView8x8
+		start = stop = 0;
+		break;
+	}
+	
+	// clear
+	for (i = 0; i < NUM_TRACKS; i++)
+		monome_led_set(column, i, 0);  
+		
+	// selection range
+	for (i = start; i < stop; i++)
+		monome_led_set(column, i, L0);
+		
+	// selection
+	monome_led_set(column, selected, L2);
+}
+
 
 static void refresh_ctrl_home(void) {
 	u8 v, p;
@@ -843,21 +894,18 @@ static void refresh_ctrl_home(void) {
 	monome_led_set(COLUMN_PAGE, s.selected_page, L2);
 	
 	// handle track select control
-	//v = view == eView8x8 ? 0 : L2;
-	// TODO: handle other modes as block lit up
-	for (u8 i = 0; i < NUM_TRACKS; i++) {
-		if (selected_track == i)
-			monome_led_set(COLUMN_SELECT, i, L2);
-		else
-			monome_led_set(COLUMN_SELECT, i, 0);
-	}
-	
+	refresh_select_control(COLUMN_SELECT, selected_track, view);
+
 	// handle view control
-	for (u8 i = 4; i <= 7; i++) {
-		if ((7 - i) == view)
-			monome_led_set(0, i, L2);
+	refresh_radio_column(COLUMN_VIEW, 0, 4, view);
+}
+
+static void refresh_radio_column(u8 column, u8 low, u8 high, u8 selected) {
+	for (u8 i = low; i <= high; i++) {
+		if (i == selected)
+			monome_led_set(column, i, L2);
 		else
-			monome_led_set(0, i, 0);
+			monome_led_set(column, i, 0);
 	}
 }
 
