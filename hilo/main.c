@@ -42,6 +42,7 @@
 #define L1 7
 #define L0 4
 
+#define COLUMN_SELECT 5
 #define COLUMN_PAGE   6
 #define COLUMN_MUTE   7
 #define COLUMN_TRACK  8
@@ -86,24 +87,29 @@ const u8 outs[8] = {B00, B01, B02, B03, B04, B05, B06, B07};
 // - 1 play head (could this be expanded to one per track?)
 //
 
+typedef enum {
+	eViewVertical = 0,
+	eView8x8,
+	eView4x16,
+	eView1x64
+} view_mode_t;
+
 typedef struct {
 	u8 trigs[NUM_TRACKS][NUM_STEPS];  // 8 tracks, 8 groups * 8 steps
 	u8 flags[NUM_TRACKS];      // bitfield containing track level mutes, freezes, etc
 	u8 selected_page, in_page, out_page;
-} hl_set;
+} hl_set_t;
 
 typedef const struct {
 	u8 fresh;
 	u8 preset_select;
 	u8 glyph[8][8];
-	hl_set sets[8];
+	hl_set_t sets[8];
 } nvram_data_t;
 
-hl_set s;
-
-//u8 selected_page = FIRST_PAGE;      // active offset into trigs
-//u8 in_page = FIRST_PAGE;
-//u8 out_page = LAST_PAGE;  // 
+hl_set_t s;
+view_mode_t view = eView8x8;
+u8 selected_track = 0;
 bool follow = true;           // selected follows play head
 
 u8 preset_mode, preset_select, front_timer;
@@ -128,8 +134,8 @@ re_t refresh_trig;
 re_t refresh_ctrl;
 
 typedef void(*kph_t)(u8 x, u8 y, u8 z);
-kph_t handle_trig_press;
-kph_t handle_ctrl_press;
+kph_t handle_trig;
+kph_t handle_ctrl;
 
 // NVRAM data structure located in the flash array.
 __attribute__((__section__(".flash_nvram")))
@@ -158,9 +164,12 @@ static void clock(u8 phase);
 static void position_set(u8 p);
 static void position_advance(s8 step);
 
-static void set_clear(hl_set *s);
+static void set_clear(hl_set_t *s);
+
 static void trig_toggle(u8 track, u8 page, u8 step);
 static void trig_clear(u8 track, u8 page, u8 step);
+static void trig_view_set(view_mode_t view);
+
 static void track_mute_set(u8 track, bool mute);
 static void track_mute_toggle(u8 track);
 static bool track_mute_enabled(u8 track);
@@ -180,9 +189,11 @@ static void handler_ClockNormal(s32 data);
 
 // 
 static void handle_null_press(u8 x, u8 y, u8 z);
-static void handle_trig_press_2x16(u8 x, u8 y, u8 z);
+static void handle_trig_press_4x16(u8 x, u8 y, u8 z);
 static void handle_trig_press_1x64(u8 x, u8 y, u8 z);
 static void handle_trig_press_vert(u8 x, u8 y, u8 z);
+
+static void handle_ctrl_home(u8 x, u8 y, u8 z);
 
 u8 flash_is_fresh(void);
 void flash_unfresh(void);
@@ -269,7 +280,7 @@ static void position_advance(s8 delta) {
 	// TODO: handle backwards looping
 }
 
-static void set_clear(hl_set *s) {
+static void set_clear(hl_set_t *s) {
 	u8 i, st;
 	for (i = 0; i < NUM_TRACKS; i++) {
 		s->flags[i] = 0;
@@ -567,7 +578,7 @@ static void handler_MonomeGridKey(s32 data) {
 	}
 	else {
 		if (x > COLUMN_MUTE) {
-			(*handle_trig_press)(x - (COLUMN_MUTE + 1), y, z); // position in first quad
+			(*handle_trig)(x - (COLUMN_MUTE + 1), y, z); // position in first quad
 		}
 		else if (x == COLUMN_MUTE) {
 			print_dbg("\r\n mute press");
@@ -599,7 +610,7 @@ static void handler_MonomeGridKey(s32 data) {
 		}
 		else {
 			print_dbg("\r\n ctrl press");
-			(*handle_ctrl_press)(x, y, z);
+			(*handle_ctrl)(x, y, z);
 		}
 	} // not preset mode
 }
@@ -623,16 +634,37 @@ static void handle_trig_press_8x8(u8 x, u8 y, u8 z) {
 	}
 }
 
-static void handle_trig_press_2x16(u8 x, u8 y, u8 z) {
-	print_dbg("\r\n handle_trig_press_2x16");
+static void handle_trig_press_4x16(u8 x, u8 y, u8 z) {
+	print_dbg("\r\n handle_trig_press_4x16");
 }
 
 static void handle_trig_press_1x64(u8 x, u8 y, u8 z) {	
-	print_dbg("\r\n handle_trig_press_1x64");
+	//print_dbg("\r\n handle_trig_press_1x64");
+	if (z) {
+		trig_toggle(selected_track, y, x);
+	}
 }
 
 static void handle_trig_press_vert(u8 x, u8 y, u8 z) {	
 	print_dbg("\r\n handle_trig_press_vert");
+}
+
+static void handle_ctrl_home(u8 x, u8 y, u8 z) {
+	if (x == 0) {
+		if (y > 3 && z) {
+			// view buttons
+			view = (view_mode_t)(7 - y);
+			trig_view_set(view);
+			monomeFrameDirty++;
+		}
+	}
+	else if (x == COLUMN_SELECT) {
+		// if (z || (y != selected_track)) {
+		if (z) {
+			selected_track = y;
+			monomeFrameDirty++;
+		}
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -745,11 +777,49 @@ static void refresh_trig_4x16(void) {
 }
 
 static void refresh_trig_1x64(void) {
+	u8 i;
+	
+	// triggers
+	for (u8 y = 0; y < NUM_PAGES; y++) {
+		for (u8 x = 0; x < PAGE_SIZE; x++) {
+			i = y * PAGE_SIZE + x;
+			if (s.trigs[selected_track][i])
+				monome_led_set(COLUMN_TRACK + x, y, L1);
+			else
+				monome_led_set(COLUMN_TRACK + x, y, 0);
+		}
+	}
+	
+	// playhead
+	monome_led_set(COLUMN_TRACK + step, page, L2);
 }
 
 static void refresh_trig_vert(void) {
 }
 
+static void trig_view_set(view_mode_t view) {
+	switch (view) {
+		case eViewVertical:
+			refresh_trig = &refresh_trig_vert;
+			handle_trig = &handle_trig_press_vert;
+			break;
+		case eView8x8:
+			refresh_trig = &refresh_trig_8x8;
+			handle_trig = &handle_trig_press_8x8;
+			break;
+ 		case eView4x16:
+			refresh_trig = &refresh_trig_4x16;
+			handle_trig = &handle_trig_press_4x16;
+			break;
+		case eView1x64:
+			refresh_trig = &refresh_trig_1x64;
+			handle_trig = &handle_trig_press_1x64;
+			break;
+		default:
+			refresh_trig = &refresh_trig_8x8;
+			handle_trig = &handle_trig_press_8x8;
+	}
+}
 
 static void refresh_ctrl_home(void) {
 	u8 v, p;
@@ -771,6 +841,24 @@ static void refresh_ctrl_home(void) {
 	}
 	monome_led_set(COLUMN_PAGE, page, L1);
 	monome_led_set(COLUMN_PAGE, s.selected_page, L2);
+	
+	// handle track select control
+	//v = view == eView8x8 ? 0 : L2;
+	// TODO: handle other modes as block lit up
+	for (u8 i = 0; i < NUM_TRACKS; i++) {
+		if (selected_track == i)
+			monome_led_set(COLUMN_SELECT, i, L2);
+		else
+			monome_led_set(COLUMN_SELECT, i, 0);
+	}
+	
+	// handle view control
+	for (u8 i = 4; i <= 7; i++) {
+		if ((7 - i) == view)
+			monome_led_set(0, i, L2);
+		else
+			monome_led_set(0, i, 0);
+	}
 }
 
 // application grid redraw without varibright
@@ -783,89 +871,21 @@ static void refresh_mono(void) {
 static void refresh_preset() {
 	u8 i1,i2;
 	
-	for(i1=0;i1<128;i1++)
+	for (i1 = 0; i1 < 128; i1++)
 		monomeLedBuffer[i1] = 0;
 	
 	monomeLedBuffer[preset_select * 16] = 11;
 	
-	for(i1=0;i1<8;i1++)
-		for(i2=0;i2<8;i2++)
-			if(glyph[i1] & (1<<i2))
-				monomeLedBuffer[i1*16+i2+8] = 11;
+	for (i1 = 0; i1 < 8; i1++)
+		for (i2 = 0; i2 < 8; i2++)
+			if (glyph[i1] & (1 << i2))
+				monomeLedBuffer[i1 * 16 + i2 + 8] = 11;
 	
 	monome_set_quadrant_flag(0);
 	monome_set_quadrant_flag(1);
 }
 
-// 
-// 
-// static void cascades_trigger(u8 n) {
-//   u8 i;
-// 
-//   m.positions[n]--;
-// 
-//   // ****** the trigger # check is so we don't cause a trigger/rules multiple times per NEXT
-//   // a rules-based jump to position-point does not current cause a trigger. should it?
-//   if(m.positions[n] < 0 && m.triggers[n] == 0) {
-//     m.triggers[n]++;
-//   
-//     if(m.rules[n] == 1) {     // inc
-//       if(m.points[m.rule_dests[n]] < (LENGTH)) {
-//         m.points[m.rule_dests[n]]++;
-//         // m.positions[m.rule_dests[n]] = m.points[m.rule_dests[n]];
-//       }
-//     }
-//     else if(m.rules[n] == 2) {  // dec
-//       if(m.points[m.rule_dests[n]] > 0) {
-//         m.points[m.rule_dests[n]]--;
-//         // m.positions[m.rule_dests[n]] = m.points[m.rule_dests[n]];
-//       }
-//     }
-//     else if(m.rules[n] == 3) {  // max
-//       m.points[m.rule_dests[n]] = (LENGTH);
-//       // m.positions[m.rule_dests[n]] = m.points[m.rule_dests[n]];
-//     }
-//     else if(m.rules[n] == 4) {  // min
-//       m.points[m.rule_dests[n]] = 0;
-//       // m.positions[m.rule_dests[n]] = m.points[m.rule_dests[n]];
-//     }
-//     else if(m.rules[n] == 5) {  // rnd
-//       m.points[m.rule_dests[n]] = rnd() % SIZE;
-//       
-//       // print_dbg("\r\n RANDOM: ");
-//       // print_dbg_hex(m.points[m.rule_dests[n]]);
-//       // print_dbg_hex(rnd() % 11);
-// 
-//       // m.positions[m.rule_dests[n]] = m.points[m.rule_dests[n]];
-//     }
-//     else if(m.rules[n] == 6) {  // up/down
-//       m.points[m.rule_dests[n]] += rnd() % 3;
-//       m.points[m.rule_dests[n]]--;
-// 
-// 
-//       if(m.points[m.rule_dests[n]] < 0) m.points[m.rule_dests[n]] = 0;
-//       else if(m.points[m.rule_dests[n]] > (LENGTH)) m.points[m.rule_dests[n]] = LENGTH;
-//       // m.positions[m.rule_dests[n]] = m.points[m.rule_dests[n]];  
-// 
-//       // print_dbg("\r\n WANDER: ");
-//       // print_dbg_hex(m.points[m.rule_dests[n]]);   
-//     }
-//     else if(m.rules[n] == 7) {  // return
-//       m.points[m.rule_dests[n]] = m.points_save[m.rule_dests[n]];
-//     }
-// 
-// 
-//     //reset
-//     m.positions[n] += m.points[n] + 1;
-// 
-//     //triggers
-//     for(i=0;i<8;i++)
-//       if(((m.trig_dests[n] & (1<<i)) != 0) && !m.freezes[i])
-//         cascades_trigger(i);
-//         // post("\ntrigger",n," -> ", m);
-//   }
-// }
-// 
+
 
 static void hilo_process_ii(uint8_t i, int d) {
 	// switch(i) {
@@ -1052,10 +1072,9 @@ int main(void) {
 	LENGTH = 15;
 	SIZE = 16;
 
-	handle_trig_press = &handle_trig_press_8x8;
-	refresh_trig = &refresh_trig_8x8;
-	
-	handle_ctrl_press = &handle_null_press;
+	trig_view_set(eView8x8);
+
+	handle_ctrl = &handle_ctrl_home;
 	refresh_ctrl = &refresh_ctrl_home;
 
 	re = &refresh;

@@ -1,9 +1,9 @@
 ideas
 =============
-* [ ] preset save/restore
+* [x] preset save/restore
 * [ ] ii control of clock when free running
   * [ ] sync to set playhead
-  * [ ] slew to tempo over time value (should lock to multiple? of clock so as to be "in time" when the goal is reached)
+  * [ ] slew to tempo over time value (should lock to multiple? of clock so as to be "in time" when the goal is reached) _NOTE: this could be done with external clock input and osc FM._
   * [ ] grid button to re-enable clock input and/or parameter kob
 * [ ] some sort of swing? (requires fine grain trigger timing)
 * [ ] fine grain shifting of triggers 8x "zoom" edit for one step
