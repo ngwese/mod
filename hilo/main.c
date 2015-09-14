@@ -678,7 +678,7 @@ static void handle_ctrl_home(u8 x, u8 y, u8 z) {
 // application grid redraw
 
 // returns the number of visible pages per view mode
-static u8 view_window(view_mode_t view) {
+static u8 view_page_count(view_mode_t view) {
   switch (view) {
   case eView8x8:
     return 1;
@@ -691,19 +691,43 @@ static u8 view_window(view_mode_t view) {
   case eViewVertical:
     return 1;
   }
-  print_dbg("\r\n view_window; unhandled view value: ");
+  print_dbg("\r\n view_page_count; unhandled view value: ");
+  print_dbg_ulong(view);
+  return 0;
+}
+
+static u8 view_track_count(view_mode_t view) {
+  switch (view) {
+  case eView8x8:
+    return 8;
+  case eView4x16:
+    return 4;
+  case eView2x32:
+    return 2;
+  case eView1x64:
+    return 1;
+  case eViewVertical:
+    return 1;
+  }
+  print_dbg("\r\n view_track_count; unhandled view value: ");
   print_dbg_ulong(view);
   return 0;
 }
 
 inline static u8 view_steps(view_mode_t view) {
-  return view_window(view) * PAGE_SIZE;
+  return view_page_count(view) * PAGE_SIZE;
 }
 
 static void view_pages(view_mode_t view, u8 focus_page, u8 *low_page, u8 *high_page) {
-  u8 size = view_window(view);
+  u8 size = view_page_count(view);
   *low_page = (focus_page / size) * size;
   *high_page = *low_page + size;
+}
+
+static void view_tracks(view_mode_t view, u8 focus_track, u8 *low_track, u8 *high_track) {
+  u8 size = view_track_count(view);
+  *low_track = (focus_track / size) * size;
+  *high_track = *low_track + size;
 }
 
 /* static void view_steps(view_mode_t view, u8 focus_page, u8 *in_step, u8 *out_step) { */
@@ -754,22 +778,19 @@ static void refresh_trig_8x8(void) {
 }
 
 static void refresh_trig_4x16(void) {
-  u8 i, t, track_low, track_high, start_row, in, out, v;
+  u8 i, t, start_row, in, out, v;
   
   // figure out which tracks are visible
-  track_low = (selected_track >> 2) * 4;
-  track_high = track_low + 4;
+  u8 track_low, track_high;
+  view_tracks(view, selected_track, &track_low, &track_high);
   
   // figure out in and out steps (visible)
-  //in = (s.selected_page >> 1) * 16;
-  //out = in + 16;
-
   u8 in_page, out_page;
   view_pages(view, s.selected_page, &in_page, &out_page);
-
+  
   in = in_page * PAGE_SIZE;
   out = out_page * PAGE_SIZE;
-  
+
   bool playhead_visible = in_page <= page && page < out_page;
   
   for (t = track_low; t < track_high; t++) {
@@ -786,16 +807,13 @@ static void refresh_trig_4x16(void) {
 }
 
 static void refresh_trig_2x32(void) {	
-  u8 i, t, track_low, track_high, start_row, in, out, v;
+  u8 i, t, start_row, in, out, v;
 	
   // figure out which tracks are visible
-  track_low = (selected_track >> 1) * 2;
-  track_high = track_low + 2;
-
+  u8 track_low, track_high;
+  view_tracks(view, selected_track, &track_low, &track_high);
+ 
   // figure out in and out positions (visible)
-  //in = (s.selected_page >> 2) * 32;
-  //out = in + 32;
-
   u8 in_page, out_page;
   view_pages(view, s.selected_page, &in_page, &out_page);
   
