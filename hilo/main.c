@@ -55,14 +55,6 @@
 #define FIRST_PAGE    0
 #define LAST_PAGE     7
 
-// s8 positions[8] = {3,1,2,2,3,3,5,7};
-// s8 points[8] = {3,1,2,2,3,3,5,7};
-// s8 points_save[8] = {3,1,2,2,3,3,5,7};
-// u8 triggers[8] = {0,0,0,0,0,0,0,0};
-// u8 trig_dests[8] = {0,0,0,0,0,0,0,0};
-// u8 rules[8] = {0,0,0,0,0,0,0,0};
-// u8 rule_dests[8] = {0,1,2,3,4,5,6,7};
-
 u8 key_count = 0;
 // u8 edit_row, mode = 0, prev_mode = 0;
 // s8 kcount = 0;
@@ -97,13 +89,6 @@ typedef enum {
 } view_mode_t;
 
 typedef struct {
-  view_mode_t kind;
-  u8 window_size; // number of pages visible per track
-  u8 in_page;     // lowest page visible, inclusive
-  u8 out_page;    // highest page visible, exclusive
-} hl_view_t;
-
-typedef struct {
   u8 trigs[NUM_TRACKS][NUM_STEPS];  // 8 tracks, 8 groups * 8 steps
   u8 flags[NUM_TRACKS];      // bitfield containing track level mutes, freezes, etc
   u8 selected_page, in_page, out_page;
@@ -117,8 +102,6 @@ typedef const struct {
 } nvram_data_t;
 
 hl_set_t s;
-hl_view_t v;
-
 view_mode_t view = eView8x8;
 
 u8 selected_track = 0;
@@ -130,6 +113,12 @@ u8 glyph[8];
 volatile u8 position = 0;  // playhead position: [0,63]
 volatile u8 page = 0;      // position / 8: [0,7]
 volatile u8 step = 0;      // position % 8; [0,7]
+volatile u8 tick = 0;
+
+volatile u16 outputs[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+u8 position_queue = 0;
+bool position_queued = false;
 
 u8 clock_phase;
 u16 clock_time, clock_temp;
@@ -179,11 +168,17 @@ static void clock(u8 phase);
 static void position_set(u8 p);
 static void position_advance(s8 step);
 
-static void set_clear(hl_set_t *s);
+static void hl_set_clear(hl_set_t *s);
 
 static void trig_toggle(u8 track, u8 page, u8 step);
 static void trig_clear(u8 track, u8 page, u8 step);
-static void trig_view_set(view_mode_t view);
+
+static void view_set(view_mode_t view);
+static u8 view_page_count(view_mode_t view);
+static u8 view_track_count(view_mode_t view);
+static u8 view_steps(view_mode_t view);
+static void view_pages(view_mode_t view, u8 focus_page, u8 *low_page, u8 *high_page);
+static void view_tracks(view_mode_t view, u8 focus_track, u8 *low_track, u8 *high_track);
 
 static void track_mute_set(u8 track, bool mute);
 static void track_mute_toggle(u8 track);
@@ -202,11 +197,11 @@ static void handler_KeyTimer(s32 data);
 static void handler_Front(s32 data);
 static void handler_ClockNormal(s32 data);
 
-// 
+// application handler
 static void handle_null_press(u8 x, u8 y, u8 z);
+
 static void handle_trig_press_8x8(u8 x, u8 y, u8 z);
-static void handle_trig_press_4x16(u8 x, u8 y, u8 z);
-static void handle_trig_press_2x32(u8 x, u8 y, u8 z);
+static void handle_trig_press_4x16_or_2x32(u8 x, u8 y, u8 z);
 static void handle_trig_press_1x64(u8 x, u8 y, u8 z);
 static void handle_trig_press_vert(u8 x, u8 y, u8 z);
 
@@ -224,30 +219,54 @@ static void hilo_process_ii(uint8_t i, int d);
 ////////////////////////////////////////////////////////////////////////////////
 // application clock code
 
-void clock(u8 phase) {
-
-  if (phase) {
+void clock(u8 phase, u8 ticks) {
+  u8 v;
+  
+  if (ticks == 0) {
     gpio_set_gpio_pin(B10);
 
-    position_advance(1);
-		
-    for (u8 t = 0; t < NUM_TRACKS; t++) {
-      if (s.trigs[t][position] && !track_mute_enabled(t)) {
-	gpio_set_gpio_pin(outs[t]);
-      }
+    if (position_queued) {
+      position_set(position_queue);
+      position_queued = false;
     }
-
-    //monomeFrameDirty++;  // because the position changed (among other things)
-    //monomeFrameDirty |= 0b0010; // mark quad 2 (trigs) as dirty
-    monome_set_quadrant_flag(1);
-    monome_set_quadrant_flag(0);
-    //monomeFrameDirty |= 0b0001; // mark quad 1 (ctrl) as dirty
+    else {
+      position_advance(1);
+    }
+    monomeFrameDirty++;
+    //monome_set_quadrant_flag(1);
+    //monome_set_quadrant_flag(0);
   }
-  else {
+
+  // STOPPED HERE: TODO:
+  // manual triggers should have priority
+  // outputs are tick counters which are set by triggers (or manual
+  // trigs)
+  // they should be high if outputs[t] > 0 and low otherwise
+  // need to figure out how to represent gate versus trigger
+  // need to figure out how to deal with shifts within a step
+  // ..just realized that the ticks notion probably is broken w/
+  // external clocks. do we have to implement a clock multiplier?
+		
+  for (u8 t = 0; t < NUM_TRACKS; t++) {
+    if (outputs[t] > 0) {
+      gpio_set_gpio_pin(out[t]);
+      outputs[t]--;
+    }
+    else if (!track_mute_enabled(t)) {
+      outputs[t] = s.trigs[t][position];
+      if 
+      outputs[t] = 0; // for UI feedback
+      gpio_set_gpio_pin(outs[t]);
+    }
+  }
+
+  if (ticks == 4) {
+    gpio_clr_gpio_pin(B10);
+    // low 
     for (u8 i = 0; i < 8; i++) {
       gpio_clr_gpio_pin(outs[i]);
     }
-    gpio_clr_gpio_pin(B10);
+
   }
 }
 
@@ -274,7 +293,7 @@ static void position_advance(s8 delta) {
   // TODO: handle backwards looping
 }
 
-static void set_clear(hl_set_t *s) {
+static void hl_set_clear(hl_set_t *s) {
   u8 i, st;
   for (i = 0; i < NUM_TRACKS; i++) {
     s->flags[i] = 0;
@@ -333,9 +352,10 @@ static softTimer_t monomeRefreshTimer  = { .next = NULL, .prev = NULL };
 
 static void clockTimer_callback(void* o) {  
   if (clock_external == 0) {
-    clock_phase++;
-    if (clock_phase > 1) clock_phase = 0;
-    (*clock_pulse)(clock_phase);
+    clock_phase = 1;
+    ticks = (ticks + 1) % 8;
+    if (ticks > 3) clock_phase = 0;
+    (*clock_pulse)(clock_phase, ticks);
   }
 }
 
@@ -624,33 +644,41 @@ static void handler_MonomeGridKey(s32 data) {
 static void handle_null_press(u8 x, u8 y, u8 z) {}
 
 static void handle_trig_press_8x8(u8 x, u8 y, u8 z) {	
-  if (z) trig_toggle(y, s.selected_page, x);
-}
-
-static void handle_trig_press_4x16(u8 x, u8 y, u8 z) {
-  //print_dbg("\r\n handle_trig_press_4x16");
   if (z) {
-    u8 track = ((selected_track >> 2) * 4) + (y >> 1);
-    u8 page = (s.selected_page >> 1) + (y % 2);
-    trig_toggle(track, page, x);
+    trig_toggle(y, s.selected_page, x);
+    monomeFrameDirty++;
   }
 }
 
-static void handle_trig_press_2x32(u8 x, u8 y, u8 z) {
-  //print_dbg("\r\n handle_trig_press_2x32");
+static void handle_trig_press_4x16_or_2x32(u8 x, u8 y, u8 z) {
+  u8 track_low, track_high, page_low, page_high;
+  u8 page_count, track, page;
+  
   if (z) {
-    u8 track = ((selected_track >> 1) * 2) + (y >> 2);
-    u8 page = (s.selected_page >> 2) + (y % 4);
+    // FIME: this works but feels expensive
+    view_tracks(view, selected_track, &track_low, &track_high);
+    view_pages(view, s.selected_page, &page_low, &page_high);
+    page_count = view_page_count(view);
+    track = track_low + (y / page_count);
+    page = page_low + (y % page_count);
     trig_toggle(track, page, x);
+    monomeFrameDirty++;
   }
 }
 
 static void handle_trig_press_1x64(u8 x, u8 y, u8 z) {	
-  if (z) trig_toggle(selected_track, y, x);
+  if (z) {
+    trig_toggle(selected_track, y, x);
+    monomeFrameDirty++;
+  }
 }
 
 static void handle_trig_press_vert(u8 x, u8 y, u8 z) {	
-  print_dbg("\r\n handle_trig_press_vert");
+  //print_dbg("\r\n handle_trig_press_vert");
+  if (z && x == 0) {
+    trig_toggle(selected_track, s.selected_page, y);
+    monomeFrameDirty++;
+  }
 }
 
 static void handle_ctrl_home(u8 x, u8 y, u8 z) {
@@ -658,12 +686,20 @@ static void handle_ctrl_home(u8 x, u8 y, u8 z) {
     if (y < 5 && z) {
       // view buttons
       view = (view_mode_t)y;
-      trig_view_set(view);
+      view_set(view);
       print_dbg("\r\n view_select: ");
-      print_dbg_ulong(view);			
+      print_dbg_ulong(view);
       monomeFrameDirty++;
     }
   }
+  else if (x == 1) {
+    if (y == 0 && z) {
+      // reset
+      position_queue = s.in_page * PAGE_SIZE;
+      position_queued = true;
+      monomeFrameDirty++;
+    }
+  }		   
   else if (x == COLUMN_SELECT) {
     if (z) {
       selected_track = y;
@@ -672,6 +708,19 @@ static void handle_ctrl_home(u8 x, u8 y, u8 z) {
       monomeFrameDirty++;
     }
   }
+  else if (y == 6) {
+    if (x < 4 && z) {
+      outputs[x] = 1;
+      monomeFrameDirty++;
+    }
+  }
+  else if (y == 7) {
+    if (x < 4 && z) {
+      outputs[x + 4] = 1;
+      monomeFrameDirty++;
+    }
+  }
+    
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -729,16 +778,6 @@ static void view_tracks(view_mode_t view, u8 focus_track, u8 *low_track, u8 *hig
   *low_track = (focus_track / size) * size;
   *high_track = *low_track + size;
 }
-
-/* static void view_steps(view_mode_t view, u8 focus_page, u8 *in_step, u8 *out_step) { */
-
-/* } */
-
-/* static bool playhead_in_view(u8 selected_page, view_mode_t view) { */
-/*   u8 window = pages_per_view(view); */
-/* } */
-
-
 
 static void refresh(void) {
   (*refresh_trig)();
@@ -846,12 +885,10 @@ static void refresh_trig_2x32(void) {
 }
 
 static void refresh_trig_1x64(void) {
-  u8 i;
-	
   // triggers
   for (u8 y = 0; y < NUM_PAGES; y++) {
     for (u8 x = 0; x < PAGE_SIZE; x++) {
-      i = y * PAGE_SIZE + x;
+      u8 i = y * PAGE_SIZE + x;
       if (s.trigs[selected_track][i])
 	monome_led_set(COLUMN_TRACK + x, y, L1);
       else
@@ -864,9 +901,27 @@ static void refresh_trig_1x64(void) {
 }
 
 static void refresh_trig_vert(void) {
+  u8 page_low, page_high, in;
+
+  refresh_trig_clear(); // since we only draw first column
+  
+  view_pages(view, s.selected_page, &page_low, &page_high);
+  in = page_low * PAGE_SIZE;
+
+  for (u8 i = 0; i < PAGE_SIZE; i++) {
+    if (s.trigs[selected_track][in + i])
+      monome_led_set(COLUMN_TRACK, i, L1);
+    else
+      monome_led_set(COLUMN_TRACK, i, 0);
+  }
+
+  // draw the playhead
+  if (page == s.selected_page) {
+    monome_led_set(COLUMN_TRACK, step, L2);
+  }	
 }
 
-static void trig_view_set(view_mode_t view) {
+static void view_set(view_mode_t view) {
   switch (view) {
   case eViewVertical:
     refresh_trig = &refresh_trig_vert;
@@ -878,11 +933,11 @@ static void trig_view_set(view_mode_t view) {
     break;
   case eView4x16:
     refresh_trig = &refresh_trig_4x16;
-    handle_trig = &handle_trig_press_4x16;
+    handle_trig = &handle_trig_press_4x16_or_2x32;
     break;
   case eView2x32:
     refresh_trig = &refresh_trig_2x32;
-    handle_trig = &handle_trig_press_2x32;
+    handle_trig = &handle_trig_press_4x16_or_2x32;
     break;
   case eView1x64:
     refresh_trig = &refresh_trig_1x64;
@@ -911,12 +966,14 @@ static void refresh_select_control(u8 column, u8 selected, view_mode_t view) {
   }
 	
   // clear
-  for (i = 0; i < NUM_TRACKS; i++)
-    monome_led_set(column, i, 0);  
+  for (i = 0; i < NUM_TRACKS; i++) {
+    monome_led_set(column, i, 0);
+  }
 		
   // selection range
-  for (i = start; i < stop; i++)
+  for (i = start; i < stop; i++) {
     monome_led_set(column, i, L0);
+  }
 		
   // selection
   monome_led_set(column, selected, L2);
@@ -933,12 +990,15 @@ static void refresh_ctrl_home(void) {
   }
 	
   // handle page control
-  for (p = 0; p < NUM_PAGES; p++) 
+  for (p = 0; p < NUM_PAGES; p++) {
     monome_led_set(COLUMN_PAGE, p, 0);
+  }
+  
   // show the loop points	
   if (s.in_page != FIRST_PAGE || s.out_page != LAST_PAGE) {
-    for (p = s.in_page; p <= s.out_page; p++)
+    for (p = s.in_page; p <= s.out_page; p++) {
       monome_led_set(COLUMN_PAGE, p, L0);
+    }
   }
   monome_led_set(COLUMN_PAGE, page, L1);
   monome_led_set(COLUMN_PAGE, s.selected_page, L2);
@@ -948,6 +1008,14 @@ static void refresh_ctrl_home(void) {
 
   // handle view control
   refresh_radio_column(COLUMN_VIEW, 0, 4, view);
+
+  // handle position queued (aka reset)
+  monome_led_set(1, 0, position_queued ? L0 : 0);
+
+  // handle manual triggers
+  for (u8 i = 0; i < NUM_TRACKS; i++) {
+    monome_led_set(i % 4, 6 + (i >> 2), outputs[i] ? L1 : 0);
+  }
 }
 
 static void refresh_radio_column(u8 column, u8 low, u8 high, u8 selected) {
@@ -969,15 +1037,19 @@ static void refresh_mono(void) {
 static void refresh_preset() {
   u8 i1,i2;
 	
-  for (i1 = 0; i1 < 128; i1++)
+  for (i1 = 0; i1 < 128; i1++) {
     monomeLedBuffer[i1] = 0;
+  }
 	
   monomeLedBuffer[preset_select * 16] = 11;
 	
-  for (i1 = 0; i1 < 8; i1++)
-    for (i2 = 0; i2 < 8; i2++)
-      if (glyph[i1] & (1 << i2))
+  for (i1 = 0; i1 < 8; i1++) {
+    for (i2 = 0; i2 < 8; i2++) {
+      if (glyph[i1] & (1 << i2)) {
 	monomeLedBuffer[i1 * 16 + i2 + 8] = 11;
+      }
+    }
+  }
 	
   monome_set_quadrant_flag(0);
   monome_set_quadrant_flag(1);
@@ -1145,7 +1217,7 @@ int main(void) {
     flashc_memset32((void*)&(flashy.preset_select), 0, 4, true);
 
     // clear out the active set
-    set_clear(&s);
+    hl_set_clear(&s);
 		
     // init all presets to current set
     for (i1 = 0; i1 < 8; i1++) {
@@ -1165,7 +1237,7 @@ int main(void) {
   LENGTH = 15;
   SIZE = 16;
 
-  trig_view_set(eView8x8);
+  view_set(eView8x8);
 
   handle_ctrl = &handle_ctrl_home;
   refresh_ctrl = &refresh_ctrl_home;
@@ -1177,7 +1249,7 @@ int main(void) {
   clock_pulse = &clock;
   clock_external = !gpio_get_pin_value(B09);
 
-  timer_add(&clockTimer, 120, &clockTimer_callback, NULL);
+  timer_add(&clockTimer, 15, &clockTimer_callback, NULL);
   timer_add(&keyTimer, 50, &keyTimer_callback, NULL);
   timer_add(&adcTimer, 100, &adcTimer_callback, NULL);
   clock_temp = 10000; // out of ADC range to force tempo
