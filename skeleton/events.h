@@ -27,6 +27,11 @@ typedef enum {
   kEventMonomeRefresh, 	
   kEventMonomeGridKey, 
   kEventMonomeRingEnc,
+  /// midi protocol
+  kEventMidiConnect,
+  kEventMidiDisconnect,
+  kEventMidiPacket,
+  kEventMidiRefresh,
 
   /// dummy/count
   kNumEventTypes,

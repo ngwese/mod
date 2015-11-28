@@ -76,6 +76,8 @@ CSRCS = \
        ../skeleton/usb/ftdi/uhi_ftdi.c \
        ../skeleton/usb/hid/hid.c \
        ../skeleton/usb/hid/uhi_hid.c \
+			 ../skeleton/usb/midi/midi.c \
+			 ../skeleton/usb/midi/uhi_midi.c \
        avr32/drivers/adc/adc.c                            \
        avr32/drivers/flashc/flashc.c                      \
        avr32/drivers/gpio/gpio.c                          \
@@ -107,6 +109,7 @@ INC_PATH = \
        ../skeleton/usb \
        ../skeleton/usb/ftdi \
        ../skeleton/usb/hid \
+			 ../skeleton/usb/midi \
        ../teletype \
        avr32/boards                                       \
        avr32/drivers/cpu/cycle_counter                    \
@@ -172,7 +175,8 @@ CFLAGS =
 #   BOARD      Target board in use, see boards/board.h for a list.
 #   EXT_BOARD  Optional extension board in use, see boards/board.h for a list.
 CPPFLAGS = \
-      -D BOARD=USER_BOARD -D UHD_ENABLE                             
+      -D BOARD=USER_BOARD -D UHD_ENABLE \
+			-D __$(THIS)__
 
 # Extra flags to use when linking
 LDFLAGS = \
