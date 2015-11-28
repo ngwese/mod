@@ -27,6 +27,7 @@
 #include "util.h"
 #include "ftdi.h"
 #include "i2c.h"
+#include "midi.h"
 
 // this
 #include "conf_board.h"
@@ -270,6 +271,8 @@ static softTimer_t cvTimer = { .next = NULL, .prev = NULL };
 static softTimer_t adcTimer = { .next = NULL, .prev = NULL };
 static softTimer_t monomePollTimer = { .next = NULL, .prev = NULL };
 static softTimer_t monomeRefreshTimer  = { .next = NULL, .prev = NULL };
+static softTimer_t midiPollTimer = { .next = NULL, .prev = NULL };
+
 
 
 static void cvTimer_callback(void* o) { 
@@ -627,6 +630,12 @@ static void adcTimer_callback(void* o) {
 	event_post(&e);
 }
 
+//midi polling callback
+static void midi_poll_timer_callback(void* obj) {
+  // asynchronous, non-blocking read
+  // UHC callback spawns appropriate events
+  midi_read();
+}
 
 // monome polling callback
 static void monome_poll_timer_callback(void* obj) {
@@ -663,8 +672,13 @@ void timers_unset_monome(void) {
 ////////////////////////////////////////////////////////////////////////////////
 // event handlers
 
-static void handler_FtdiConnect(s32 data) { ftdi_setup(); }
-static void handler_FtdiDisconnect(s32 data) { 
+static void handler_FtdiConnect(s32 data) {
+	print_dbg("\r\n// ftdi connect ///////////////////");
+	ftdi_setup();
+}
+
+static void handler_FtdiDisconnect(s32 data) {
+	print_dbg("\r\n// ftdi disconnect ////////////////");
 	timers_unset_monome();
 	// event_t e = { .type = kEventMonomeDisconnect };
 	// event_post(&e);
@@ -672,7 +686,7 @@ static void handler_FtdiDisconnect(s32 data) {
 }
 
 static void handler_MonomeConnect(s32 data) {
-	// print_dbg("\r\n// monome connect /////////////////"); 
+	print_dbg("\r\n// monome connect /////////////////"); 
 	key_count = 0;
 	SIZE = monome_size_x();
 	LENGTH = SIZE - 1;
@@ -712,7 +726,7 @@ static void handler_MonomeRefresh(s32 data) {
 
 
 static void handler_Front(s32 data) {
-	// print_dbg("\r\n //// FRONT HOLD");
+	print_dbg("\r\n //// FRONT HOLD");
 
 	if(data == 0) {
 		front_timer = 15;
@@ -736,8 +750,8 @@ static void handler_PollADC(s32 data) {
 			if(port_edit == 1) {
 				if(i == 0) {
 					aout[3].slew = port_time = ((adc[i] + adc_last[i])>>1 >> 4);
-					// print_dbg("\r\nportamento: ");
-					// print_dbg_ulong(port_time);
+					print_dbg("\r\nportamento: ");
+					print_dbg_ulong(port_time);
 				}
 			}
 			else if(all_edit) {
@@ -814,8 +828,8 @@ static void handler_KeyTimer(s32 data) {
 				}
 			}
 
-			// print_dbg("\rlong press: "); 
-			// print_dbg_ulong(held_keys[i1]);
+			print_dbg("\rlong press: "); 
+			print_dbg_ulong(held_keys[i1]);
 		}
 	}
 }
@@ -1793,6 +1807,40 @@ static void es_process_ii(uint8_t i, int d) {
 
 
 
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// application midi code
+static void handler_MidiConnect(s32 data) {
+	print_dbg("\r\nmidi connect: 0x");
+	print_dbg_hex(data);
+	
+	// disable es
+	timer_add( &midiPollTimer, 20, &midi_poll_timer_callback, NULL );
+	
+}
+
+static void handler_MidiDisconnect(s32 data) {
+	print_dbg("\r\nmidi disconnect: 0x");
+	print_dbg_hex(data);
+
+	timer_remove( &midiPollTimer );
+  // re-enable es
+	
+}
+
+static void handler_MidiPacket(s32 data) {
+	print_dbg("\r\nmidi packet: 0x");
+	print_dbg_hex(data);
+
+}
+
+static void handler_MidiRefresh(s32 data) {
+	print_dbg("\r\nmidi refresh: 0x");
+	print_dbg_hex(data);
+}
+
 
 
 
@@ -1812,7 +1860,12 @@ static inline void assign_main_event_handlers(void) {
 	app_event_handlers[ kEventMonomeDisconnect ]	= &handler_None ;
 	app_event_handlers[ kEventMonomePoll ]	= &handler_MonomePoll ;
 	app_event_handlers[ kEventMonomeRefresh ]	= &handler_MonomeRefresh ;
-	app_event_handlers[ kEventMonomeGridKey ]	= &handler_MonomeGridKey ;
+	app_event_handlers[ kEventMonomeGridKey ]       = &handler_MonomeGridKey ;
+
+	app_event_handlers[ kEventMidiConnect ]	    = &handler_MidiConnect ;
+	app_event_handlers[ kEventMidiDisconnect ]  = &handler_MidiDisconnect ;
+	app_event_handlers[ kEventMidiPacket ]      = &handler_MidiPacket ;
+	app_event_handlers[ kEventMidiRefresh ]     = &handler_MidiRefresh ;
 }
 
 // app event loop
