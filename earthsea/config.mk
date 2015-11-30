@@ -70,6 +70,7 @@ CSRCS = \
        ../skeleton/interrupts.c \
        ../skeleton/monome.c \
        ../skeleton/timers.c \
+			 ../skeleton/notes.c \
        ../skeleton/usb.c \
        ../skeleton/util.c \
        ../skeleton/usb/ftdi/ftdi.c \

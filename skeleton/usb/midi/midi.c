@@ -132,15 +132,15 @@ static void midi_rx_done( usb_add_t add,
   int i;
   rxBusy = 0;
   if(nb > 0) {
-    print_dbg("\r\n midi rx; status: 0x");
-    print_dbg_hex((u32)stat);
-    print_dbg(" ; nb: ");
-    print_dbg_ulong(nb);
-    print_dbg(" ; data: ");
-    for(i=0; i<nb; i++) {
-      print_dbg_char_hex(rxBuf[i]);
-      print_dbg(" ");
-    }
+    // print_dbg("\r\n midi rx; status: 0x");
+    // print_dbg_hex((u32)stat);
+    // print_dbg(" ; nb: ");
+    // print_dbg_ulong(nb);
+    // print_dbg(" ; data: ");
+    // for(i=0; i<nb; i++) {
+    //   print_dbg_char_hex(rxBuf[i]);
+    //   print_dbg(" ");
+    // }
     // ignoring 1st byte, virtual cable select
     rxBytes = nb - 1;
     midi_parse();

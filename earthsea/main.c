@@ -28,6 +28,7 @@
 #include "ftdi.h"
 #include "i2c.h"
 #include "midi.h"
+#include "notes.h"
 
 // this
 #include "conf_board.h"
@@ -1812,28 +1813,171 @@ static void es_process_ii(uint8_t i, int d) {
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 // application midi code
+
+
+static void midi_note_on(u8 ch, u8 num, u8 vel) {
+	print_dbg("\r\n midi_note_on(), ch: ");
+	print_dbg_ulong(ch);
+	print_dbg(" num: ");
+	print_dbg_ulong(num);
+	print_dbg(" vel: ");
+	print_dbg_ulong(vel);
+
+	// keep track of held notes for legato
+	notes_hold(num, vel);
+	
+	// wrong need to handle multiple presses
+	
+	// pitch aka "pos"
+	aout[3].target = SEMI[num]; // FIXME: SEMI table is only 64 entries
+	if(port_active) { // portemento active
+		aout[3].step = (aout[3].slew >> 2) + 1;
+		aout[3].delta = ((aout[3].target - aout[3].now)<<16) / aout[3].step;
+		aout[3].a = aout[3].now<<16;
+	}
+	else {
+		aout[3].now = aout[3].target;
+	}
+	
+	// velocity
+	aout[2].target = vel << 9; // 128 << 9 == 65536;
+	aout[2].now = aout[2].target;
+	
+	// tracking?
+	//aout[1].target = (EXP[num * 2]) << 6; // roughly max DAC scale
+	aout[1].target = num << 9;
+	aout[1].now = aout[1].target;
+
+	// print_dbg("\r\n    dac // p:");
+	// print_dbg_ulong(aout[3].target);
+	// print_dbg(" v: ");
+	// print_dbg_ulong(aout[2].target);
+	// print_dbg(" t: ");
+	// print_dbg_ulong(aout[1].target);
+	
+	gpio_set_gpio_pin(B00);
+}
+
+static void midi_note_off(u8 ch, u8 num, u8 vel) {
+	print_dbg("\r\n midi_note_off(), ch: ");
+	print_dbg_ulong(ch);
+	print_dbg(" num: ");
+	print_dbg_ulong(num);
+	print_dbg(" vel: ");
+	print_dbg_ulong(vel);
+
+	notes_release(num);
+	const held_note_t *prior = notes_get(kNotePriorityLast);
+	if (prior) {
+		print_dbg("\r\n   prior // num: ");
+		print_dbg_ulong(prior->num);
+		print_dbg(" vel: ");
+		print_dbg_ulong(prior->vel);
+	}
+	
+	// figure out pitch
+
+	// velocity
+	// aout[2].target = vel << 9; // 128 << 9 == 65536;
+	// aout[2].now = aout[2].target;
+	
+	// wrong need to handle multiple presses
+	gpio_clr_gpio_pin(B00);	
+}
+
+static void handler_MidiPollADC(s32 data) {
+	u8 i, n;
+	u16 cv;
+	
+	adc_convert(&adc);
+	
+	for(i=0;i<3;i++) {
+		if(ain[i].hys) {
+			switch (i) {
+				case 0:
+					// portamento
+					aout[3].slew = port_time = ((adc[i] + adc_last[i])>>1 >> 4);
+					// slew is [0, 256]
+					// print_dbg("\r\nadc 0 / portamento: ");
+					// print_dbg_ulong(port_time);
+					break;
+				case 1:
+					cv = (adc[i] + adc_last[i]) >> 1;
+					// cv is [0, 4096] -- 4038 seems like the max returned from converter
+					// print_dbg("\r\nadc 1: ");
+					// print_dbg_ulong(cv);
+					break;
+				case 2:
+					cv = (adc[i] + adc_last[i]) >> 1;
+					// print_dbg("\r\nadc 2: ");
+					// print_dbg_ulong(cv);
+					break;
+			}
+		}
+		else if(abs(((adc[i] + adc_last[i])>>1) - ain[i].latch) > POT_HYSTERESIS) {
+			ain[i].hys = 1;
+		}
+		adc_last[i] = adc[i];
+	}
+}
+
 static void handler_MidiConnect(s32 data) {
 	print_dbg("\r\nmidi connect: 0x");
 	print_dbg_hex(data);
 	
 	// disable es
-	timer_add( &midiPollTimer, 20, &midi_poll_timer_callback, NULL );
-	
+	timer_remove(&clockTimer);
+	//timer_remove(&adcTimer); // handler_FtdiDisconnect
+
+	notes_init();
+
+	// switch handlers
+	app_event_handlers[ kEventPollADC ] = &handler_MidiPollADC;
+
+	// install timers
+	timer_add(&adcTimer, 10, &adcTimer_callback, NULL);
+	timer_add(&midiPollTimer, 41, &midi_poll_timer_callback, NULL);
 }
 
 static void handler_MidiDisconnect(s32 data) {
 	print_dbg("\r\nmidi disconnect: 0x");
 	print_dbg_hex(data);
 
-	timer_remove( &midiPollTimer );
+	timer_remove(&midiPollTimer);
+	timer_remove(&adcTimer); // remove ours
+
   // re-enable es
+	app_event_handlers[ kEventPollADC ] = &handler_PollADC;
 	
+	// FIXME: copied from main()
+	//timer_add(&adcTimer, 5, &adcTimer_callback, NULL); // handler_MonomeConnect(s32 data)
+	timer_add(&clockTimer, 6, &clockTimer_callback, NULL);
 }
 
-static void handler_MidiPacket(s32 data) {
-	print_dbg("\r\nmidi packet: 0x");
-	print_dbg_hex(data);
+static void handler_MidiPacket(s32 raw) {
+	static u8 com;
+	static u8 ch, num, vel;
+	
+	u32 data = (u32)raw;
 
+	// print_dbg("\r\nmidi packet: 0x");
+	// print_dbg_hex(data);
+
+	// check status byte  
+  com = (data & 0xf0000000) >> 28; 
+  if (com == 0x9) {
+		// note on
+    ch = (data & 0x0f000000) >> 24;
+  	num = (data & 0xff0000) >> 16;
+  	vel = (data & 0xff00) >> 8;
+		midi_note_on(ch, num, vel);
+	} else if (com == 0x8) {
+		// note off
+    ch = (data & 0x0f000000) >> 24;
+    num = (data & 0xff0000) >> 16;
+    vel = (data & 0xff00) >> 8;
+		midi_note_off(ch, num, vel);
+  }
 }
 
 static void handler_MidiRefresh(s32 data) {
@@ -1976,7 +2120,7 @@ int main(void)
 	init_i2c_slave(0x50);
 
 
-	print_dbg("\r\n\n// earthsea! //////////////////////////////// ");
+	print_dbg("\r\n\n// earthsea! (m) //////////////////////////////// ");
 	print_dbg_ulong(sizeof(flashy));
 
 	root_x = 15;
