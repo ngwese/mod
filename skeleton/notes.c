@@ -2,12 +2,12 @@
 
 #include "print_funcs.h"
 
-// maintains a fixed size poll of held notes
+// maintains a fixed size pool of held notes
 //
 // the pool is structured as a linked list ordered from most recent to least
 // recent notes.
 
-#define POOL_SIZE 16
+#define POOL_SIZE 12
 
 struct pool_element {
   held_note_t note;
@@ -55,7 +55,7 @@ inline static u8 pool_count(void) {
 static pool_element_t *pool_take(void) {
   pool_element_t *allocated = NULL;
   
-  print_dbg("\r\npool_take()... ");
+  // print_dbg("\r\npool_take()... ");
   
   if (pool_remaining() == 0) {
     // fail fast if full
@@ -83,14 +83,14 @@ static pool_element_t *pool_take(void) {
     pool_push(allocated); // chain and set as head
   }
   
-  print_dbg_hex(allocated);
+  // print_dbg_hex(allocated);
   
   return allocated;
 }
 
 static void pool_return(pool_element_t *element) {
   pool_element_t *before;
-  print_dbg("\r\n pool_return()... ");
+  // print_dbg("\r\n pool_return()... ");
   if (element) {
     if (element->next) {
       // middle of chain, pop out of chain
@@ -99,21 +99,21 @@ static void pool_return(pool_element_t *element) {
         before = before->next;
       before->next = element->next;
     }
-    print_dbg(" num: ");
-    print_dbg_ulong(element->note.num);
-    element->is_free = 0;
+    // print_dbg(" num: ");
+    // print_dbg_ulong(element->note.num);
+    element->is_free = 1;
     element->next = NULL;
     element->note.num = 0;
     element->note.vel = 0;
     _pool_last_free = element;
     _pool_count--;
-    print_dbg(" new count: ");
-    print_dbg_ulong(_pool_count);
+    // print_dbg(" new count: ");
+    // print_dbg_ulong(_pool_count);
   }
 }
 
 static void pool_init(void) {
-  print_dbg("\r\npool_init...");
+  // print_dbg("\r\npool_init...");
   for (u8 i = 0; i < POOL_SIZE; i++) {
     _pool[i].note.num = 0;
     _pool[i].note.vel = 0;
@@ -123,7 +123,7 @@ static void pool_init(void) {
   _pool_count = 0;
   _pool_head = NULL;
   _pool_last_free = NULL;
-  print_dbg(" done.");  
+  // print_dbg(" done.");  
 }
 
 //
@@ -154,7 +154,7 @@ void notes_release(u8 num) {
   pool_element_t *element = pool_head();
   pool_element_t *before = NULL;
   
-  print_dbg("\r\nnotes_release()...");
+  // print_dbg("\r\nnotes_release()...");
   
   // find matching note
   while (element && element->note.num != num) {
@@ -163,17 +163,18 @@ void notes_release(u8 num) {
   }
   
   if (element) {
-    print_dbg(" match ");
+    // print_dbg(" match");
     // found a match
     if (before) {
       // in the middle
       before->next = element->next;
-      print_dbg(" middle ");
+      // print_dbg(" middle.");
     }
     else {
       // element is head
       _pool_head = element->next;
-      print_dbg(" head ");
+      element->next = NULL; // FIXME: to prevent pool_return from messing up head?? nope
+      // print_dbg(" head.");
     }
     pool_return(element);
   }

@@ -172,6 +172,8 @@ u8 all_edit;
 
 u8 clock_mode;
 
+u8 midi_legato;
+
 s8 move_x, move_y;
 
 //this
@@ -1867,22 +1869,31 @@ static void midi_note_off(u8 ch, u8 num, u8 vel) {
 	print_dbg_ulong(vel);
 
 	notes_release(num);
-	const held_note_t *prior = notes_get(kNotePriorityLast);
-	if (prior) {
-		print_dbg("\r\n   prior // num: ");
-		print_dbg_ulong(prior->num);
-		print_dbg(" vel: ");
-		print_dbg_ulong(prior->vel);
-	}
 	
-	// figure out pitch
+	if (midi_legato) {
+		const held_note_t *prior = notes_get(kNotePriorityLast);
+		if (prior) {
+			print_dbg("\r\n   prior // num: ");
+			print_dbg_ulong(prior->num);
+			print_dbg(" vel: ");
+			print_dbg_ulong(prior->vel);
+	
+			// figure out pitch
 
-	// velocity
-	// aout[2].target = vel << 9; // 128 << 9 == 65536;
-	// aout[2].now = aout[2].target;
-	
-	// wrong need to handle multiple presses
-	gpio_clr_gpio_pin(B00);	
+			// velocity
+			// aout[2].target = vel << 9; // 128 << 9 == 65536;
+			// aout[2].now = aout[2].target;
+		
+			// retrigger?
+		}
+		else {
+			gpio_clr_gpio_pin(B00);
+		}
+	}
+	else {
+		// no legato mode
+		gpio_clr_gpio_pin(B00);
+	}
 }
 
 static void handler_MidiPollADC(s32 data) {
@@ -1930,6 +1941,7 @@ static void handler_MidiConnect(s32 data) {
 	//timer_remove(&adcTimer); // handler_FtdiDisconnect
 
 	notes_init();
+	midi_legato = 1; // FIXME: allow this to be controlled!
 
 	// switch handlers
 	app_event_handlers[ kEventPollADC ] = &handler_MidiPollADC;
