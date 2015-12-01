@@ -1947,8 +1947,8 @@ static void handler_MidiConnect(s32 data) {
 	app_event_handlers[ kEventPollADC ] = &handler_MidiPollADC;
 
 	// install timers
-	timer_add(&adcTimer, 10, &adcTimer_callback, NULL);
-	timer_add(&midiPollTimer, 41, &midi_poll_timer_callback, NULL);
+	timer_add(&adcTimer, 13, &adcTimer_callback, NULL);
+	timer_add(&midiPollTimer, 19, &midi_poll_timer_callback, NULL);
 }
 
 static void handler_MidiDisconnect(s32 data) {
