@@ -180,6 +180,7 @@ s8 move_x, move_y;
 u16 port_time;
 
 u8 port_active, port_edit, port_toggle;
+volatile u8 slew_active;
 
 
 u8 SIZE, LENGTH, VARI;
@@ -277,25 +278,7 @@ static softTimer_t monomeRefreshTimer  = { .next = NULL, .prev = NULL };
 static softTimer_t midiPollTimer = { .next = NULL, .prev = NULL };
 
 
-
-static void cvTimer_callback(void* o) { 
-	u8 i;
-
-	for(i=0;i<4;i++)
-		if(aout[i].step) {
-			aout[i].step--;
-
-			if(aout[i].step == 0) {
-				aout[i].now = aout[i].target;
-			}
-			else {
-				aout[i].a += aout[i].delta;
-				aout[i].now = aout[i].a >> 16;
-			}
-
-			monomeFrameDirty++;
-		}
-
+static void aout_write(void) {
 	spi_selectChip(SPI,DAC_SPI);
 	spi_write(SPI,0x31);
 	spi_write(SPI,aout[2].now>>4);
@@ -304,7 +287,7 @@ static void cvTimer_callback(void* o) {
 	spi_write(SPI,aout[0].now>>4);
 	spi_write(SPI,aout[0].now<<4);
 	spi_unselectChip(SPI,DAC_SPI);
-
+	
 	spi_selectChip(SPI,DAC_SPI);
 	spi_write(SPI,0x38);
 	spi_write(SPI,aout[3].now>>4);
@@ -313,6 +296,29 @@ static void cvTimer_callback(void* o) {
 	spi_write(SPI,aout[1].now>>4);
 	spi_write(SPI,aout[1].now<<4);
 	spi_unselectChip(SPI,DAC_SPI);
+}
+
+static void cvTimer_callback(void* o) { 
+	u8 i;
+	
+	if(slew_active) {
+		for(i=0;i<4;i++) {
+			if(aout[i].step) {
+				aout[i].step--;
+				
+				if(aout[i].step == 0) {
+					aout[i].now = aout[i].target;
+				}
+				else {
+					aout[i].a += aout[i].delta;
+					aout[i].now = aout[i].a >> 16;
+				}
+				
+				monomeFrameDirty++;
+			}
+		}
+		aout_write();
+	}
 }
 
 static void clockTimer_callback(void* o) {  
@@ -1816,21 +1822,7 @@ static void es_process_ii(uint8_t i, int d) {
 ////////////////////////////////////////////////////////////////////////////////
 // application midi code
 
-
-static void midi_note_on(u8 ch, u8 num, u8 vel) {
-	print_dbg("\r\n midi_note_on(), ch: ");
-	print_dbg_ulong(ch);
-	print_dbg(" num: ");
-	print_dbg_ulong(num);
-	print_dbg(" vel: ");
-	print_dbg_ulong(vel);
-
-	// keep track of held notes for legato
-	notes_hold(num, vel);
-	
-	// wrong need to handle multiple presses
-	
-	// pitch aka "pos"
+inline static void aout_set_pitch(u8 num) {
 	aout[3].target = SEMI[num]; // FIXME: SEMI table is only 64 entries
 	if(port_active) { // portemento active
 		aout[3].step = (aout[3].slew >> 2) + 1;
@@ -1839,17 +1831,47 @@ static void midi_note_on(u8 ch, u8 num, u8 vel) {
 	}
 	else {
 		aout[3].now = aout[3].target;
-	}
-	
-	// velocity
-	aout[2].target = vel << 9; // 128 << 9 == 65536;
-	aout[2].now = aout[2].target;
-	
-	// tracking?
-	//aout[1].target = (EXP[num * 2]) << 6; // roughly max DAC scale
-	aout[1].target = num << 9;
-	aout[1].now = aout[1].target;
+	}	
+}
 
+inline static void aout_set_velocity(u8 vel) {
+	// TODO: support non-linear mappings
+	aout[2].target = vel << 5; // 128 << 5 == 4096; 12-bit dac
+	aout[2].now = aout[2].target;
+}
+
+inline static void aout_set_tracking(u8 num) {
+	// TODO: support non-linear mappings?
+	aout[1].target = num << 5; // 128 << 5 == 4096; 12-bit dac
+	aout[1].now = aout[1].target;	
+}
+
+static void aout_clear(void) {
+	for (u8 i = 0; i < 4; i++) {
+		aout[i].step = 0;
+		aout[i].now = aout[i].target = 0;
+		// slew? a? delta?
+	}
+}
+
+static void midi_note_on(u8 ch, u8 num, u8 vel) {
+	// print_dbg("\r\n midi_note_on(), ch: ");
+	// print_dbg_ulong(ch);
+	// print_dbg(" num: ");
+	// print_dbg_ulong(num);
+	// print_dbg(" vel: ");
+	// print_dbg_ulong(vel);
+
+	// keep track of held notes for legato
+	notes_hold(num, vel);
+		
+	// suspend slew cvTimer
+	slew_active = 0;
+	aout_set_pitch(num);
+	aout_set_velocity(vel);
+	aout_set_tracking(num);
+	aout_write();
+	
 	// print_dbg("\r\n    dac // p:");
 	// print_dbg_ulong(aout[3].target);
 	// print_dbg(" v: ");
@@ -1858,15 +1880,19 @@ static void midi_note_on(u8 ch, u8 num, u8 vel) {
 	// print_dbg_ulong(aout[1].target);
 	
 	gpio_set_gpio_pin(B00);
+	
+	slew_active = 1;
+	
+	reset_hys(); // FIXME: why? is this really correct?
 }
 
 static void midi_note_off(u8 ch, u8 num, u8 vel) {
-	print_dbg("\r\n midi_note_off(), ch: ");
-	print_dbg_ulong(ch);
-	print_dbg(" num: ");
-	print_dbg_ulong(num);
-	print_dbg(" vel: ");
-	print_dbg_ulong(vel);
+	// print_dbg("\r\n midi_note_off(), ch: ");
+	// print_dbg_ulong(ch);
+	// print_dbg(" num: ");
+	// print_dbg_ulong(num);
+	// print_dbg(" vel: ");
+	// print_dbg_ulong(vel);
 
 	notes_release(num);
 	
@@ -1878,12 +1904,12 @@ static void midi_note_off(u8 ch, u8 num, u8 vel) {
 			print_dbg(" vel: ");
 			print_dbg_ulong(prior->vel);
 	
-			// figure out pitch
-
-			// velocity
-			// aout[2].target = vel << 9; // 128 << 9 == 65536;
-			// aout[2].now = aout[2].target;
-		
+			slew_active = 0;
+			aout_set_pitch(prior->num);
+			aout_set_velocity(prior->vel);
+			aout_set_tracking(prior->num);
+			aout_write();
+			slew_active = 1;
 			// retrigger?
 		}
 		else {
@@ -1907,21 +1933,24 @@ static void handler_MidiPollADC(s32 data) {
 			switch (i) {
 				case 0:
 					// portamento
-					aout[3].slew = port_time = ((adc[i] + adc_last[i])>>1 >> 4);
+					port_time = ((adc[i] + adc_last[i])>>1 >> 4);
+					aout[3].slew = EXP[port_time];
 					// slew is [0, 256]
-					// print_dbg("\r\nadc 0 / portamento: ");
-					// print_dbg_ulong(port_time);
+					print_dbg("\r\nadc 0 / portamento: ");
+					print_dbg_ulong(port_time);
+					print_dbg(" exp: ");
+					print_dbg_ulong(aout[3].slew);
 					break;
 				case 1:
 					cv = (adc[i] + adc_last[i]) >> 1;
 					// cv is [0, 4096] -- 4038 seems like the max returned from converter
-					// print_dbg("\r\nadc 1: ");
-					// print_dbg_ulong(cv);
+					print_dbg("\r\nadc 1: ");
+					print_dbg_ulong(cv);
 					break;
 				case 2:
 					cv = (adc[i] + adc_last[i]) >> 1;
-					// print_dbg("\r\nadc 2: ");
-					// print_dbg_ulong(cv);
+					print_dbg("\r\nadc 2: ");
+					print_dbg_ulong(cv);
 					break;
 			}
 		}
@@ -1939,13 +1968,25 @@ static void handler_MidiConnect(s32 data) {
 	// disable es
 	timer_remove(&clockTimer);
 	//timer_remove(&adcTimer); // handler_FtdiDisconnect
+	
+	// TODO: stash aout values from current es set?
 
 	notes_init();
 	midi_legato = 1; // FIXME: allow this to be controlled!
+	port_active = 1; // FIXME: allow this to be controlled!
+	
+	// reset outputs
+	slew_active = 0;
+	aout_clear();
+	aout_write();
+	gpio_clr_gpio_pin(B00);
+	slew_active = 1;
 
 	// switch handlers
 	app_event_handlers[ kEventPollADC ] = &handler_MidiPollADC;
 
+	reset_hys();
+	
 	// install timers
 	timer_add(&adcTimer, 13, &adcTimer_callback, NULL);
 	timer_add(&midiPollTimer, 19, &midi_poll_timer_callback, NULL);
@@ -1955,11 +1996,24 @@ static void handler_MidiDisconnect(s32 data) {
 	print_dbg("\r\nmidi disconnect: 0x");
 	print_dbg_hex(data);
 
+	// remove midi related timers
 	timer_remove(&midiPollTimer);
 	timer_remove(&adcTimer); // remove ours
 
+	// reset outputs
+	slew_active = 0;
+	aout_clear();
+	aout_write();
+	gpio_clr_gpio_pin(B00);
+	slew_active = 1;
+
+	reset_hys();
+
   // re-enable es
 	app_event_handlers[ kEventPollADC ] = &handler_PollADC;
+		
+	// TODO: restore aout values from active es set;
+	// TODO: resotre port_active state
 	
 	// FIXME: copied from main()
 	//timer_add(&adcTimer, 5, &adcTimer_callback, NULL); // handler_MonomeConnect(s32 data)
@@ -2219,6 +2273,9 @@ int main(void)
 	spi_write(SPI,0xff);
 	spi_write(SPI,0xff);
 	spi_unselectChip(SPI,DAC_SPI);
+	
+	// ensure cvTimer_callback does something
+	slew_active = 1;
 
 	timer_add(&clockTimer,6,&clockTimer_callback, NULL);
 	timer_add(&cvTimer,5,&cvTimer_callback, NULL);
