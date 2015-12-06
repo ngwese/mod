@@ -42,16 +42,26 @@
 #define EVENTS_PER_PATTERN 128
 #define SLEW_CV_OFF_THRESH 4000
 
+#define MIDI_NOTE_MAX 120
+
 const u16 SHAPE_PATTERN[16] = {256, 288, 160, 384, 272, 292, 84, 448, 273, 432, 325, 168, 336, 276, 162};
 const u8 SHAPE_OFF_Y[9] = {0, 1, 1, 0, 0, 2, 2, 0, 0};
 
 const u8 EDGE_GLYPH[3][4] = {{7,5,5,13}, {15,9,9,9}, {15,0,0,0} };
 
-const u16 SEMI[64] = {
-	0, 34, 68, 102, 136, 170, 204, 238, 273, 307, 341, 375, 409, 443, 477, 512, 546, 580, 614, 648, 682, 716,
-	750, 785, 819, 853, 887, 921, 955, 989, 1024, 1058, 1092, 1126, 1160, 1194, 1228, 1262, 1297, 1331, 1365,
-	1399, 1433, 1467, 1501, 1536, 1570, 1604, 1638, 1672, 1706, 1740, 1774, 1809, 1843, 1877, 1911, 1945, 1979,
-	2013, 2048, 2082, 2116, 2150
+// step = 4096.0 / (10 ocatave * 12.0 semitones per octave)
+// [int(n * step) for n in xrange(0,128)]
+const u16 SEMI[128] = { 
+	0, 34, 68, 102, 136, 170, 204, 238, 273, 307, 341, 375, 409, 443, 477, 512,
+	546, 580, 614, 648, 682, 716, 750, 785, 819, 853, 887, 921, 955, 989, 1024,
+	1058, 1092, 1126, 1160, 1194, 1228, 1262, 1297, 1331, 1365, 1399, 1433, 1467,
+	1501, 1536, 1570, 1604, 1638, 1672, 1706, 1740, 1774, 1809, 1843, 1877, 1911,
+	1945, 1979, 2013, 2048, 2082, 2116, 2150, 2184, 2218, 2252, 2286, 2321, 2355,
+	2389, 2423, 2457, 2491, 2525, 2560, 2594, 2628, 2662, 2696, 2730, 2764, 2798,
+	2833, 2867, 2901, 2935, 2969, 3003, 3037, 3072, 3106, 3140, 3174, 3208, 3242,
+	3276, 3310, 3345, 3379, 3413, 3447, 3481, 3515, 3549, 3584, 3618, 3652, 3686,
+	3720, 3754, 3788, 3822, 3857, 3891, 3925, 3959, 3993, 4027, 4061, 4096, 4130,
+	4164, 4198, 4232, 4266, 4300, 4334
 };
 
 const u16 EXP[256] = {0, 0, 0, 1, 2, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13, 14, 16, 17, 19, 20, 22, 24, 25, 27, 29, 31,
@@ -65,6 +75,35 @@ const u16 EXP[256] = {0, 0, 0, 1, 2, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13, 14, 16, 17
 	654, 659, 665, 670, 675, 680, 686, 691, 696, 701, 707, 712, 717, 723, 728, 733, 739, 744, 749, 755, 760, 766, 771,
 	777, 782, 788, 793, 799, 804, 810, 815, 821, 826, 832, 838, 843, 849, 855, 860, 866, 872, 877, 883, 889, 894, 900,
 	906, 912, 917, 923, 929, 935, 941, 946, 952, 958, 964, 970, 976, 982, 988, 994, 1000, 1006, 1012};
+	
+// step = 0.9 / 128
+// [int((math.log10(0.1 + (i * step)) + 1) * 4096) for i in xrange(0,128)]
+const u16 LOG[128] = { 
+	0, 120, 234, 340, 440, 535, 626, 711, 793, 872, 947, 1019, 1088, 1154, 1219,
+	1281, 1340, 1398, 1454, 1509, 1561, 1613, 1663, 1711, 1758, 1804, 1849, 1893,
+	1935, 1977, 2017, 2057, 2096, 2134, 2172, 2208, 2244, 2279, 2313, 2347, 2380,
+	2413, 2445, 2476, 2507, 2537, 2567, 2596, 2625, 2653, 2681, 2709, 2736, 2762,
+	2789, 2815, 2840, 2865, 2890, 2915, 2939, 2962, 2986, 3009, 3032, 3055, 3077,
+	3099, 3121, 3142, 3163, 3184, 3205, 3226, 3246, 3266, 3286, 3306, 3325, 3344,
+	3363, 3382, 3400, 3419, 3437, 3455, 3473, 3491, 3508, 3525, 3543, 3559, 3576,
+	3593, 3610, 3626, 3642, 3658, 3674, 3690, 3705, 3721, 3736, 3752, 3767, 3782,
+	3797, 3811, 3826, 3840, 3855, 3869, 3883, 3897, 3911, 3925, 3939, 3952, 3966,
+	3979, 3993, 4006, 4019, 4032, 4045, 4058, 4070, 4083
+};
+
+// step = 1.0 / 128
+// [int(math.pow(i * step, 2) * 4096) for i in xrange(0,128)]
+const u16 EXP2[128] = {
+	0, 0, 1, 2, 4, 6, 9, 12, 16, 20, 25, 30, 36, 42, 49, 56, 64, 72, 81, 90, 100,
+	110, 121, 132, 144, 156, 169, 182, 196, 210, 225, 240, 256, 272, 289, 306,
+	324, 342, 361, 380, 400, 420, 441, 462, 484, 506, 529, 552, 576, 600, 625,
+	650, 676, 702, 729, 756, 784, 812, 841, 870, 900, 930, 961, 992, 1024, 1056,
+	1089, 1122, 1156, 1190, 1225, 1260, 1296, 1332, 1369, 1406, 1444, 1482, 1521,
+	1560, 1600, 1640, 1681, 1722, 1764, 1806, 1849, 1892, 1936, 1980, 2025, 2070,
+	2116, 2162, 2209, 2256, 2304, 2352, 2401, 2450, 2500, 2550, 2601, 2652, 2704,
+	2756, 2809, 2862, 2916, 2970, 3025, 3080, 3136, 3192, 3249, 3306, 3364, 3422,
+	3481, 3540, 3600, 3660, 3721, 3782, 3844, 3906, 3969, 4032
+};
 
 
 typedef enum { eStandard, eFixed, eDrone } eEdge;
@@ -102,6 +141,13 @@ typedef struct {
 } aout_t;
 
 
+typedef struct {
+	u8 port_active;
+	u16 port_time;
+	aout_t aout[4];
+} es_suspend_t;
+
+
 
 typedef struct {
 	eEdge edge;
@@ -128,7 +174,7 @@ typedef const struct {
 } nvram_data_t;
 
 es_set es;
-
+es_suspend_t suspend;
 
 u8 preset_mode, preset_select, front_timer;
 u8 glyph[8];
@@ -173,6 +219,7 @@ u8 all_edit;
 u8 clock_mode;
 
 u8 midi_legato;
+u8 vel_shape, track_shape;
 
 s8 move_x, move_y;
 
@@ -240,6 +287,7 @@ void reset_hys(void);
 
 
 static void es_process_ii(uint8_t i, int d);
+static void es_midi_process_ii(uint8_t i, int d);
 
 
 void reset_hys() {
@@ -682,12 +730,12 @@ void timers_unset_monome(void) {
 // event handlers
 
 static void handler_FtdiConnect(s32 data) {
-	print_dbg("\r\n// ftdi connect ///////////////////");
+	// print_dbg("\r\n// ftdi connect ///////////////////");
 	ftdi_setup();
 }
 
 static void handler_FtdiDisconnect(s32 data) {
-	print_dbg("\r\n// ftdi disconnect ////////////////");
+	// print_dbg("\r\n// ftdi disconnect ////////////////");
 	timers_unset_monome();
 	// event_t e = { .type = kEventMonomeDisconnect };
 	// event_post(&e);
@@ -695,7 +743,7 @@ static void handler_FtdiDisconnect(s32 data) {
 }
 
 static void handler_MonomeConnect(s32 data) {
-	print_dbg("\r\n// monome connect /////////////////"); 
+	// print_dbg("\r\n// monome connect /////////////////"); 
 	key_count = 0;
 	SIZE = monome_size_x();
 	LENGTH = SIZE - 1;
@@ -735,7 +783,7 @@ static void handler_MonomeRefresh(s32 data) {
 
 
 static void handler_Front(s32 data) {
-	print_dbg("\r\n //// FRONT HOLD");
+	// print_dbg("\r\n //// FRONT HOLD");
 
 	if(data == 0) {
 		front_timer = 15;
@@ -759,8 +807,8 @@ static void handler_PollADC(s32 data) {
 			if(port_edit == 1) {
 				if(i == 0) {
 					aout[3].slew = port_time = ((adc[i] + adc_last[i])>>1 >> 4);
-					print_dbg("\r\nportamento: ");
-					print_dbg_ulong(port_time);
+					// print_dbg("\r\nportamento: ");
+					// print_dbg_ulong(port_time);
 				}
 			}
 			else if(all_edit) {
@@ -837,15 +885,15 @@ static void handler_KeyTimer(s32 data) {
 				}
 			}
 
-			print_dbg("\rlong press: "); 
-			print_dbg_ulong(held_keys[i1]);
+			// print_dbg("\rlong press: "); 
+			// print_dbg_ulong(held_keys[i1]);
 		}
 	}
 }
 
 
 static void handler_ClockNormal(s32 data) {
-	print_dbg("\r\nclock norm int");
+	// print_dbg("\r\nclock norm int");
 	// clock_external = !gpio_get_pin_value(B09); 
 }
 
@@ -1822,9 +1870,29 @@ static void es_process_ii(uint8_t i, int d) {
 ////////////////////////////////////////////////////////////////////////////////
 // application midi code
 
+inline static u16 blend(u8 num, u8 mix) {
+	// num: [0, 127]
+	// mix: [0, 100], 0 == logish, 100 == expish
+	u32 m;
+	u16 v;
+	
+	if (mix == 0) {
+		v = LOG[num];
+	}
+	else if (mix >= 100) {
+		v = EXP2[num];
+	}
+	else {
+		m = ((LOG[num] * (99 - mix)) + (EXP2[num] * mix)) / 99;
+		v = (u16)m;
+	}
+	
+	return v;
+}
+
 inline static void aout_set_pitch(u8 num) {
-	aout[3].target = SEMI[num]; // FIXME: SEMI table is only 64 entries
-	if(port_active) { // portemento active
+	aout[3].target = SEMI[num];
+	if (port_active) { // portemento active
 		aout[3].step = (aout[3].slew >> 2) + 1;
 		aout[3].delta = ((aout[3].target - aout[3].now)<<16) / aout[3].step;
 		aout[3].a = aout[3].now<<16;
@@ -1834,16 +1902,28 @@ inline static void aout_set_pitch(u8 num) {
 	}	
 }
 
-inline static void aout_set_velocity(u8 vel) {
-	// TODO: support non-linear mappings
-	aout[2].target = vel << 5; // 128 << 5 == 4096; 12-bit dac
+inline static void aout_set_velocity(u16 vel) {
+	// TODO: support slewing on velocity when in legato mode but only when
+	// restoring a previously played note
+	// aout[2].target = vel << 5; // 128 << 5 == 4096; 12-bit dac
+	aout[2].target = blend(vel, vel_shape);
 	aout[2].now = aout[2].target;
+	// print_dbg(" __vo: ");
+	// print_dbg_ulong(aout[2].target);
 }
 
-inline static void aout_set_tracking(u8 num) {
+inline static void aout_set_tracking(u16 num) {
+	// aout[1].target = num << 5; // 128 << 5 == 4096; 12-bit dac
+	aout[1].target = blend(num, track_shape);
+	aout[1].now = aout[1].target;
+	// print_dbg(" __to: ");
+	// print_dbg_ulong(aout[1].target);
+}
+
+inline static void aout_set_a0(u8 num) {
 	// TODO: support non-linear mappings?
-	aout[1].target = num << 5; // 128 << 5 == 4096; 12-bit dac
-	aout[1].now = aout[1].target;	
+	aout[0].target = num << 5;
+	aout[0].now = aout[0].target;
 }
 
 static void aout_clear(void) {
@@ -1861,6 +1941,10 @@ static void midi_note_on(u8 ch, u8 num, u8 vel) {
 	// print_dbg_ulong(num);
 	// print_dbg(" vel: ");
 	// print_dbg_ulong(vel);
+
+	if (num > MIDI_NOTE_MAX)
+		// drop notes outside CV range
+		return
 
 	// keep track of held notes for legato
 	notes_hold(num, vel);
@@ -1894,15 +1978,19 @@ static void midi_note_off(u8 ch, u8 num, u8 vel) {
 	// print_dbg(" vel: ");
 	// print_dbg_ulong(vel);
 
+	if (num > MIDI_NOTE_MAX)
+		// drop notes outside CV range
+		return
+		
 	notes_release(num);
 	
 	if (midi_legato) {
 		const held_note_t *prior = notes_get(kNotePriorityLast);
 		if (prior) {
-			print_dbg("\r\n   prior // num: ");
-			print_dbg_ulong(prior->num);
-			print_dbg(" vel: ");
-			print_dbg_ulong(prior->vel);
+			// print_dbg("\r\n   prior // num: ");
+			// print_dbg_ulong(prior->num);
+			// print_dbg(" vel: ");
+			// print_dbg_ulong(prior->vel);
 	
 			slew_active = 0;
 			aout_set_pitch(prior->num);
@@ -1922,39 +2010,74 @@ static void midi_note_off(u8 ch, u8 num, u8 vel) {
 	}
 }
 
+static void midi_channel_pressure(u8 ch, u8 val) {
+	// print_dbg("\r\n midi_channel_pressure(), ch: ");
+	// print_dbg_ulong(ch);
+	// print_dbg(" val: ");
+	// print_dbg_ulong(val);	
+}
+
+static void midi_pitch_bend(u8 ch, u16 bend) {
+	// print_dbg("\r\n midi_pitch_bend(), ch: ");
+	// print_dbg_ulong(ch);
+	// print_dbg(" bend: ");
+	// print_dbg_ulong(bend);	
+}
+
+static void midi_control_change(u8 ch, u8 num, u8 val) {
+	// print_dbg("\r\n midi_control_change(), ch: ");
+	// print_dbg_ulong(ch);
+	// print_dbg(" num: ");
+	// print_dbg_ulong(num);	
+	// print_dbg(" val: ");
+	// print_dbg_ulong(val);	
+	
+	if (num == 1) {
+		// mod wheel
+		// TODO: set a small amount of slewing
+		slew_active = 0;
+		aout_set_a0(val);
+		aout_write(); // should we just write the one?
+		slew_active = 1;
+	}
+}
+
+
 static void handler_MidiPollADC(s32 data) {
-	u8 i, n;
+	u8 i;
 	u16 cv;
 	
 	adc_convert(&adc);
 	
-	for(i=0;i<3;i++) {
-		if(ain[i].hys) {
+	for (i = 0; i < 3; i++) {
+		if (ain[i].hys) {
 			switch (i) {
 				case 0:
 					// portamento
-					port_time = ((adc[i] + adc_last[i])>>1 >> 4);
+					port_time = ((adc[i] + adc_last[i]) >> 1 >> 4);
 					aout[3].slew = EXP[port_time];
 					// slew is [0, 256]
-					print_dbg("\r\nadc 0 / portamento: ");
-					print_dbg_ulong(port_time);
-					print_dbg(" exp: ");
-					print_dbg_ulong(aout[3].slew);
+					// print_dbg("\r\nadc 0 / portamento: ");
+					// print_dbg_ulong(port_time);
+					// print_dbg(" exp: ");
+					// print_dbg_ulong(aout[3].slew);
 					break;
 				case 1:
-					cv = (adc[i] + adc_last[i]) >> 1;
 					// cv is [0, 4096] -- 4038 seems like the max returned from converter
-					print_dbg("\r\nadc 1: ");
-					print_dbg_ulong(cv);
+					cv = ((adc[i] + adc_last[i]) >> 1) / 40;  // [0, ~20]
+					track_shape = (u8)cv;
+					// print_dbg("\r\ntrack shape: ");
+					// print_dbg_ulong(cv);
 					break;
 				case 2:
-					cv = (adc[i] + adc_last[i]) >> 1;
-					print_dbg("\r\nadc 2: ");
-					print_dbg_ulong(cv);
+					cv = ((adc[i] + adc_last[i]) >> 1) / 40; // [0, ~20]
+					vel_shape = (u8)cv;
+					// print_dbg("\r\nvel shape: ");
+					// print_dbg_ulong(cv);
 					break;
 			}
 		}
-		else if(abs(((adc[i] + adc_last[i])>>1) - ain[i].latch) > POT_HYSTERESIS) {
+		else if (abs(((adc[i] + adc_last[i]) >> 1) - ain[i].latch) > POT_HYSTERESIS) {
 			ain[i].hys = 1;
 		}
 		adc_last[i] = adc[i];
@@ -1962,19 +2085,22 @@ static void handler_MidiPollADC(s32 data) {
 }
 
 static void handler_MidiConnect(s32 data) {
-	print_dbg("\r\nmidi connect: 0x");
-	print_dbg_hex(data);
+	// print_dbg("\r\nmidi connect: 0x");
+	// print_dbg_hex(data);
 	
-	// disable es
+	// disable es and stash global state
 	timer_remove(&clockTimer);
-	//timer_remove(&adcTimer); // handler_FtdiDisconnect
+	//timer_remove(&adcTimer); // done by handler_FtdiDisconnect
+	suspend.port_active = port_active;
+	for (u8 i = 0; i < 4; i++)
+		suspend.aout[i] = aout[i];
+		
+	process_ii = &es_midi_process_ii;
 	
-	// TODO: stash aout values from current es set?
-
 	notes_init();
 	midi_legato = 1; // FIXME: allow this to be controlled!
 	port_active = 1; // FIXME: allow this to be controlled!
-	
+
 	// reset outputs
 	slew_active = 0;
 	aout_clear();
@@ -1988,13 +2114,13 @@ static void handler_MidiConnect(s32 data) {
 	reset_hys();
 	
 	// install timers
-	timer_add(&adcTimer, 13, &adcTimer_callback, NULL);
-	timer_add(&midiPollTimer, 19, &midi_poll_timer_callback, NULL);
+	timer_add(&adcTimer, 27, &adcTimer_callback, NULL);
+	timer_add(&midiPollTimer, 13, &midi_poll_timer_callback, NULL);
 }
 
 static void handler_MidiDisconnect(s32 data) {
-	print_dbg("\r\nmidi disconnect: 0x");
-	print_dbg_hex(data);
+	// print_dbg("\r\nmidi disconnect: 0x");
+	// print_dbg_hex(data);
 
 	// remove midi related timers
 	timer_remove(&midiPollTimer);
@@ -2011,44 +2137,81 @@ static void handler_MidiDisconnect(s32 data) {
 
   // re-enable es
 	app_event_handlers[ kEventPollADC ] = &handler_PollADC;
-		
-	// TODO: restore aout values from active es set;
-	// TODO: resotre port_active state
+	
+	// restore es global state
+	port_active = suspend.port_active;
+	for (u8 i = 0; i < 4; i++)
+		aout[i] = suspend.aout[i];
+	
+	process_ii = &es_process_ii;
 	
 	// FIXME: copied from main()
-	//timer_add(&adcTimer, 5, &adcTimer_callback, NULL); // handler_MonomeConnect(s32 data)
+	//timer_add(&adcTimer, 5, &adcTimer_callback, NULL); // done by handler_MonomeConnect
 	timer_add(&clockTimer, 6, &clockTimer_callback, NULL);
 }
 
 static void handler_MidiPacket(s32 raw) {
 	static u8 com;
-	static u8 ch, num, vel;
-	
+	static u8 ch, num, val;
+	static u16 bend;
+
 	u32 data = (u32)raw;
 
 	// print_dbg("\r\nmidi packet: 0x");
 	// print_dbg_hex(data);
 
+	// FIXME: ch seems to always be 0?
+
 	// check status byte  
-  com = (data & 0xf0000000) >> 28; 
-  if (com == 0x9) {
+  com = (data & 0xf0000000) >> 28;
+  ch  = (data & 0x0f000000) >> 24;
+	switch (com) {
+  case 0x9:
 		// note on
-    ch = (data & 0x0f000000) >> 24;
   	num = (data & 0xff0000) >> 16;
-  	vel = (data & 0xff00) >> 8;
-		midi_note_on(ch, num, vel);
-	} else if (com == 0x8) {
-		// note off
-    ch = (data & 0x0f000000) >> 24;
+  	val = (data &   0xff00) >> 8;
+		if (val == 0)
+			// note on with zero velocity is note off (per midi spec)
+			midi_note_off(ch, num, val);
+		else
+			midi_note_on(ch, num, val);
+		break;
+	case 0x8:
+		// note off (with velocity)
     num = (data & 0xff0000) >> 16;
-    vel = (data & 0xff00) >> 8;
-		midi_note_off(ch, num, vel);
+    val = (data &   0xff00) >> 8;
+		midi_note_off(ch, num, val);
+		break;
+	case 0xd:
+		// channel pressure
+		val = (data & 0x7f0000) >> 16;
+		midi_channel_pressure(ch, val);
+		break;
+	case 0xe:
+		// pitch bend
+		bend = ((data & 0x00ff0000) >> 16) | ((data & 0xff00) >> 1);
+		midi_pitch_bend(ch, bend);
+		break;
+	case 0xb:
+		// control change
+		num = (data & 0xff0000) >> 16;
+    val = (data &   0xff00) >> 8;
+		midi_control_change(ch, num, val);
+		break;
+	default:
+		// TODO: poly pressure, program change, chanel mode *, rtc, etc
+		break;
   }
 }
 
 static void handler_MidiRefresh(s32 data) {
-	print_dbg("\r\nmidi refresh: 0x");
-	print_dbg_hex(data);
+	// print_dbg("\r\nmidi refresh: 0x");
+	// print_dbg_hex(data);
+}
+
+static void es_midi_process_ii(uint8_t i, int d) {
+	// for now we do nothing
+	// tt clocked arp would be fun
 }
 
 
@@ -2186,7 +2349,7 @@ int main(void)
 	init_i2c_slave(0x50);
 
 
-	print_dbg("\r\n\n// earthsea! (m) //////////////////////////////// ");
+	print_dbg("\r\n\n// earthsea! //////////////////////////////// ");
 	print_dbg_ulong(sizeof(flashy));
 
 	root_x = 15;
