@@ -140,14 +140,11 @@ typedef struct {
 	u32 a;
 } aout_t;
 
-
 typedef struct {
 	u8 port_active;
 	u16 port_time;
 	aout_t aout[4];
 } es_suspend_t;
-
-
 
 typedef struct {
 	eEdge edge;
@@ -1872,19 +1869,33 @@ static void es_process_ii(uint8_t i, int d) {
 
 inline static u16 blend(u8 num, u8 mix) {
 	// num: [0, 127]
-	// mix: [0, 100], 0 == logish, 100 == expish
+	// mix: [0, 100], 0 == logish, 50 == linear, 100 == expish
 	u32 m;
 	u16 v;
 	
-	if (mix == 0) {
-		v = LOG[num];
+	if (mix < 50) {
+		if (mix == 0) {
+			v = LOG[num];
+		}
+		else {
+			// log -> lin mix
+			m = ((LOG[num] * (50 - mix)) + ((num << 5) * mix)) / 50;
+			v = (u16)m;
+		}
 	}
-	else if (mix >= 100) {
-		v = EXP2[num];
+	else if (mix == 50) {
+		v = num << 5; // 128 << 5 == 4096
 	}
 	else {
-		m = ((LOG[num] * (99 - mix)) + (EXP2[num] * mix)) / 99;
-		v = (u16)m;
+		if (mix >= 100) {
+			v = EXP2[num];
+		}
+		else {
+			// lin -> exp mix
+			mix -= 50;
+			m = (((num << 5) * (50 - mix)) + (EXP2[num] * mix)) / 50;
+			v = (u16)m;
+		}
 	}
 	
 	return v;
@@ -2035,6 +2046,8 @@ static void midi_control_change(u8 ch, u8 num, u8 val) {
 	if (num == 1) {
 		// mod wheel
 		// TODO: set a small amount of slewing
+		// TODO: implement midi learn buy capturing the controller number when the
+		// front panel button is held down.
 		slew_active = 0;
 		aout_set_a0(val);
 		aout_write(); // should we just write the one?
