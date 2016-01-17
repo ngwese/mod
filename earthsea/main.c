@@ -43,13 +43,15 @@
 #define SLEW_CV_OFF_THRESH 4000
 
 #define MIDI_NOTE_MAX 120
+#define MIDI_BEND_ZERO 0x2000  // 1 << 13
+#define MIDI_BEND_SLEW 15
 
 const u16 SHAPE_PATTERN[16] = {256, 288, 160, 384, 272, 292, 84, 448, 273, 432, 325, 168, 336, 276, 162};
 const u8 SHAPE_OFF_Y[9] = {0, 1, 1, 0, 0, 2, 2, 0, 0};
 
 const u8 EDGE_GLYPH[3][4] = {{7,5,5,13}, {15,9,9,9}, {15,0,0,0} };
 
-// step = 4096.0 / (10 ocatave * 12.0 semitones per octave)
+// step = 4096.0 / (10 octave * 12.0 semitones per octave)
 // [int(n * step) for n in xrange(0,128)]
 const u16 SEMI[128] = { 
 	0, 34, 68, 102, 136, 170, 204, 238, 273, 307, 341, 375, 409, 443, 477, 512,
@@ -64,17 +66,25 @@ const u16 SEMI[128] = {
 	4164, 4198, 4232, 4266, 4300, 4334
 };
 
-const u16 EXP[256] = {0, 0, 0, 1, 2, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13, 14, 16, 17, 19, 20, 22, 24, 25, 27, 29, 31,
-	33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 54, 56, 58, 60, 63, 65, 68, 70, 72, 75, 77, 80, 83, 85, 88, 91, 93,
-	96, 99, 101, 104, 107, 110, 113, 116, 119, 122, 125, 128, 131, 134, 137, 140, 143, 146, 149, 152, 155, 159, 162,
-	165, 168, 172, 175, 178, 182, 185, 189, 192, 195, 199, 202, 206, 209, 213, 217, 220, 224, 227, 231, 235, 238,
-	242, 246, 250, 253, 257, 261, 265, 268, 272, 276, 280, 284, 288, 292, 296, 300, 304, 308, 312, 316, 320, 324, 328,
-	332, 336, 341, 345, 349, 353, 357, 362, 366, 370, 374, 379, 383, 387, 392, 396, 400, 405, 409, 414, 418, 423, 427,
-	432, 436, 441, 445, 450, 454, 459, 463, 468, 473, 477, 482, 487, 491, 496, 501, 505, 510, 515, 520, 525, 529, 534,
-	539, 544, 549, 554, 559, 563, 568, 573, 578, 583, 588, 593, 598, 603, 608, 613, 618, 623, 629, 634, 639, 644, 649,
-	654, 659, 665, 670, 675, 680, 686, 691, 696, 701, 707, 712, 717, 723, 728, 733, 739, 744, 749, 755, 760, 766, 771,
-	777, 782, 788, 793, 799, 804, 810, 815, 821, 826, 832, 838, 843, 849, 855, 860, 866, 872, 877, 883, 889, 894, 900,
-	906, 912, 917, 923, 929, 935, 941, 946, 952, 958, 964, 970, 976, 982, 988, 994, 1000, 1006, 1012};
+const u16 EXP[256] = {
+	0, 0, 0, 1, 2, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13, 14, 16, 17, 19, 20, 22, 24,
+	25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 54, 56, 58, 60, 63,
+	65, 68, 70, 72, 75, 77, 80, 83, 85, 88, 91, 93, 96, 99, 101, 104, 107, 110,
+	113, 116, 119, 122, 125, 128, 131, 134, 137, 140, 143, 146, 149, 152, 155,
+	159, 162, 165, 168, 172, 175, 178, 182, 185, 189, 192, 195, 199, 202, 206,
+	209, 213, 217, 220, 224, 227, 231, 235, 238, 242, 246, 250, 253, 257, 261,
+	265, 268, 272, 276, 280, 284, 288, 292, 296, 300, 304, 308, 312, 316, 320,
+	324, 328, 332, 336, 341, 345, 349, 353, 357, 362, 366, 370, 374, 379, 383,
+	387, 392, 396, 400, 405, 409, 414, 418, 423, 427, 432, 436, 441, 445, 450,
+	454, 459, 463, 468, 473, 477, 482, 487, 491, 496, 501, 505, 510, 515, 520,
+	525, 529, 534, 539, 544, 549, 554, 559, 563, 568, 573, 578, 583, 588, 593,
+	598, 603, 608, 613, 618, 623, 629, 634, 639, 644, 649, 654, 659, 665, 670,
+	675, 680, 686, 691, 696, 701, 707, 712, 717, 723, 728, 733, 739, 744, 749,
+	755, 760, 766, 771, 777, 782, 788, 793, 799, 804, 810, 815, 821, 826, 832,
+	838, 843, 849, 855, 860, 866, 872, 877, 883, 889, 894, 900, 906, 912, 917,
+	923, 929, 935, 941, 946, 952, 958, 964, 970, 976, 982, 988, 994, 1000, 1006,
+	1012
+};
 	
 // step = 0.9 / 128
 // [int((math.log10(0.1 + (i * step)) + 1) * 4096) for i in xrange(0,128)]
@@ -105,6 +115,45 @@ const u16 EXP2[128] = {
 	3481, 3540, 3600, 3660, 3721, 3782, 3844, 3906, 3969, 4032
 };
 
+// step = 4096.0 / (10 octave * 12.0 semitones per octave)
+// semi_per_octave = step * 12
+// bend_step = semi_per_octave / 512.0
+// [int(n * bend_step) for n in xrange(0,512)]
+const u16 BEND1[512] = {
+	0, 0, 1, 2, 3, 4, 4, 5, 6, 7, 8, 8, 9, 10, 11, 12, 12, 13, 14, 15, 16, 16, 17,
+	18, 19, 20, 20, 21, 22, 23, 24, 24, 25, 26, 27, 28, 28, 29, 30, 31, 32, 32,
+	33, 34, 35, 36, 36, 37, 38, 39, 40, 40, 41, 42, 43, 44, 44, 45, 46, 47, 48,
+	48, 49, 50, 51, 52, 52, 53, 54, 55, 56, 56, 57, 58, 59, 60, 60, 61, 62, 63,
+	64, 64, 65, 66, 67, 68, 68, 69, 70, 71, 72, 72, 73, 74, 75, 76, 76, 77, 78,
+	79, 80, 80, 81, 82, 83, 84, 84, 85, 86, 87, 88, 88, 89, 90, 91, 92, 92, 93,
+	94, 95, 96, 96, 97, 98, 99, 100, 100, 101, 102, 103, 104, 104, 105, 106, 107,
+	108, 108, 109, 110, 111, 112, 112, 113, 114, 115, 116, 116, 117, 118, 119,
+	120, 120, 121, 122, 123, 124, 124, 125, 126, 127, 128, 128, 129, 130, 131,
+	132, 132, 133, 134, 135, 136, 136, 137, 138, 139, 140, 140, 141, 142, 143,
+	144, 144, 145, 146, 147, 148, 148, 149, 150, 151, 152, 152, 153, 154, 155,
+	156, 156, 157, 158, 159, 160, 160, 161, 162, 163, 164, 164, 165, 166, 167,
+	168, 168, 169, 170, 171, 172, 172, 173, 174, 175, 176, 176, 177, 178, 179,
+	180, 180, 181, 182, 183, 184, 184, 185, 186, 187, 188, 188, 189, 190, 191,
+	192, 192, 193, 194, 195, 196, 196, 197, 198, 199, 200, 200, 201, 202, 203,
+	204, 204, 205, 206, 207, 208, 208, 209, 210, 211, 212, 212, 213, 214, 215,
+	216, 216, 217, 218, 219, 220, 220, 221, 222, 223, 224, 224, 225, 226, 227,
+	228, 228, 229, 230, 231, 232, 232, 233, 234, 235, 236, 236, 237, 238, 239,
+	240, 240, 241, 242, 243, 244, 244, 245, 246, 247, 248, 248, 249, 250, 251,
+	252, 252, 253, 254, 255, 256, 256, 257, 258, 259, 260, 260, 261, 262, 263,
+	264, 264, 265, 266, 267, 268, 268, 269, 270, 271, 272, 272, 273, 274, 275,
+	276, 276, 277, 278, 279, 280, 280, 281, 282, 283, 284, 284, 285, 286, 287,
+	288, 288, 289, 290, 291, 292, 292, 293, 294, 295, 296, 296, 297, 298, 299,
+	300, 300, 301, 302, 303, 304, 304, 305, 306, 307, 308, 308, 309, 310, 311,
+	312, 312, 313, 314, 315, 316, 316, 317, 318, 319, 320, 320, 321, 322, 323,
+	324, 324, 325, 326, 327, 328, 328, 329, 330, 331, 332, 332, 333, 334, 335,
+	336, 336, 337, 338, 339, 340, 340, 341, 342, 343, 344, 344, 345, 346, 347,
+	348, 348, 349, 350, 351, 352, 352, 353, 354, 355, 356, 356, 357, 358, 359,
+	360, 360, 361, 362, 363, 364, 364, 365, 366, 367, 368, 368, 369, 370, 371,
+	372, 372, 373, 374, 375, 376, 376, 377, 378, 379, 380, 380, 381, 382, 383,
+	384, 384, 385, 386, 387, 388, 388, 389, 390, 391, 392, 392, 393, 394, 395,
+	396, 396, 397, 398, 399, 400, 400, 401, 402, 403, 404, 404, 405, 406, 407,
+	408, 408
+};
 
 typedef enum { eStandard, eFixed, eDrone } eEdge;
 typedef enum { mNormal, mSlew, mEdge, mSelect, mBank } eMode;
@@ -216,6 +265,8 @@ u8 all_edit;
 u8 clock_mode;
 
 u8 midi_legato;
+u8 sustain_active;
+s16 pitch_offset;
 u8 vel_shape, track_shape;
 
 s8 move_x, move_y;
@@ -1902,7 +1953,7 @@ inline static u16 blend(u8 num, u8 mix) {
 }
 
 inline static void aout_set_pitch(u8 num) {
-	aout[3].target = SEMI[num];
+	aout[3].target = SEMI[num] + pitch_offset;
 	if (port_active) { // portemento active
 		aout[3].step = (aout[3].slew >> 2) + 1;
 		aout[3].delta = ((aout[3].target - aout[3].now)<<16) / aout[3].step;
@@ -1911,6 +1962,14 @@ inline static void aout_set_pitch(u8 num) {
 	else {
 		aout[3].now = aout[3].target;
 	}	
+}
+
+inline static void aout_set_pitch_slew(u8 num, u8 port_time) {
+	// like aout_set_pitch but always slews with the given amount [0,256]
+	aout[3].target = SEMI[num] + pitch_offset;
+	aout[3].step = (EXP[port_time] >> 2) + 1;
+	aout[3].delta = ((aout[3].target - aout[3].now)<<16) / aout[3].step;
+	aout[3].a = aout[3].now<<16;
 }
 
 inline static void aout_set_velocity(u16 vel) {
@@ -1955,7 +2014,7 @@ static void midi_note_on(u8 ch, u8 num, u8 vel) {
 
 	if (num > MIDI_NOTE_MAX)
 		// drop notes outside CV range
-		return
+		return;
 
 	// keep track of held notes for legato
 	notes_hold(num, vel);
@@ -1991,33 +2050,35 @@ static void midi_note_off(u8 ch, u8 num, u8 vel) {
 
 	if (num > MIDI_NOTE_MAX)
 		// drop notes outside CV range
-		return
+		return;
 		
-	notes_release(num);
-	
-	if (midi_legato) {
-		const held_note_t *prior = notes_get(kNotePriorityLast);
-		if (prior) {
-			// print_dbg("\r\n   prior // num: ");
-			// print_dbg_ulong(prior->num);
-			// print_dbg(" vel: ");
-			// print_dbg_ulong(prior->vel);
-	
-			slew_active = 0;
-			aout_set_pitch(prior->num);
-			aout_set_velocity(prior->vel);
-			aout_set_tracking(prior->num);
-			aout_write();
-			slew_active = 1;
-			// retrigger?
+	if (sustain_active == 0) {
+		notes_release(num);
+
+		if (midi_legato) {
+			const held_note_t *prior = notes_get(kNotePriorityLast);
+			if (prior) {
+				// print_dbg("\r\n   prior // num: ");
+				// print_dbg_ulong(prior->num);
+				// print_dbg(" vel: ");
+				// print_dbg_ulong(prior->vel);
+
+				slew_active = 0;
+				aout_set_pitch(prior->num);
+				aout_set_velocity(prior->vel);
+				aout_set_tracking(prior->num);
+				aout_write();
+				slew_active = 1;
+				// retrigger edge?
+			}
+			else {
+				gpio_clr_gpio_pin(B00);
+			}
 		}
 		else {
+			// no legato mode
 			gpio_clr_gpio_pin(B00);
 		}
-	}
-	else {
-		// no legato mode
-		gpio_clr_gpio_pin(B00);
 	}
 }
 
@@ -2032,7 +2093,36 @@ static void midi_pitch_bend(u8 ch, u16 bend) {
 	// print_dbg("\r\n midi_pitch_bend(), ch: ");
 	// print_dbg_ulong(ch);
 	// print_dbg(" bend: ");
-	// print_dbg_ulong(bend);	
+	// print_dbg_ulong(bend);
+	if (bend == MIDI_BEND_ZERO) {
+		pitch_offset = 0;
+	}
+	else if (bend > MIDI_BEND_ZERO) {
+		bend -= MIDI_BEND_ZERO;
+		pitch_offset = BEND1[bend >> 4];
+	}
+	else {
+		bend = MIDI_BEND_ZERO - bend - 1;
+		pitch_offset = -BEND1[bend >> 4];
+	}
+
+	// re-set pitch to pick up changed offset
+	const held_note_t *active = notes_get(kNotePriorityLast);
+	if (active) {
+		aout_set_pitch_slew(active->num, MIDI_BEND_SLEW);  // TODO: make slew configurable
+		aout_write();
+	}
+}
+
+static void midi_sustain(u8 ch, u8 val) {
+	if (val < 64) {
+		notes_init();
+		gpio_clr_gpio_pin(B00);
+		sustain_active = 0;
+	}
+	else {
+		sustain_active = 1;
+	}
 }
 
 static void midi_control_change(u8 ch, u8 num, u8 val) {
@@ -2043,15 +2133,21 @@ static void midi_control_change(u8 ch, u8 num, u8 val) {
 	// print_dbg(" val: ");
 	// print_dbg_ulong(val);	
 	
-	if (num == 1) {
-		// mod wheel
-		// TODO: set a small amount of slewing
-		// TODO: implement midi learn buy capturing the controller number when the
-		// front panel button is held down.
-		slew_active = 0;
-		aout_set_a0(val);
-		aout_write(); // should we just write the one?
-		slew_active = 1;
+	switch (num) {
+		case 1:  // mod wheel
+			// TODO: set a small amount of slewing
+			// TODO: implement midi learn buy capturing the controller number when the
+			// front panel button is held down.
+			slew_active = 0;
+			aout_set_a0(val);
+			aout_write(); // should we just write the one?
+			slew_active = 1;
+			break;
+		case 64:  // sustain pedal
+			midi_sustain(ch, val);
+			break;
+		default:
+			break;
 	}
 }
 
@@ -2113,6 +2209,8 @@ static void handler_MidiConnect(s32 data) {
 	notes_init();
 	midi_legato = 1; // FIXME: allow this to be controlled!
 	port_active = 1; // FIXME: allow this to be controlled!
+	sustain_active = 0;
+	pitch_offset = 0;
 
 	// reset outputs
 	slew_active = 0;
