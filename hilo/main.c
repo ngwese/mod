@@ -23,8 +23,8 @@
 #include "types.h"
 #include "events.h"
 #include "i2c.h"
-#include "init.h"
-#include "interrupts.h"
+#include "init_trilogy.h"
+#include "init_common.h"
 #include "monome.h"
 #include "timers.h"
 #include "adc.h"
@@ -122,6 +122,7 @@ bool position_queued = false;
 
 u8 clock_phase;
 u16 clock_time, clock_temp;
+u8 ticks; // FIXME: need to vet this
 
 u16 adc[4];
 u8 SIZE, LENGTH, VARI;
@@ -163,7 +164,7 @@ static void refresh_ctrl_home(void);
 static void refresh_select_control(u8 column, u8 seleted, view_mode_t view);
 static void refresh_radio_column(u8 column, u8 low, u8 high, u8 selected);
 
-static void clock(u8 phase);
+static void clock(u8 phase, u8 ticks);
 
 static void position_set(u8 p);
 static void position_advance(s8 step);
@@ -249,13 +250,13 @@ void clock(u8 phase, u8 ticks) {
 		
   for (u8 t = 0; t < NUM_TRACKS; t++) {
     if (outputs[t] > 0) {
-      gpio_set_gpio_pin(out[t]);
+      gpio_set_gpio_pin(outputs[t]);
       outputs[t]--;
     }
     else if (!track_mute_enabled(t)) {
       outputs[t] = s.trigs[t][position];
-      if 
-      outputs[t] = 0; // for UI feedback
+      //if 
+      //outputs[t] = 0; // for UI feedback
       gpio_set_gpio_pin(outs[t]);
     }
   }
@@ -355,7 +356,8 @@ static void clockTimer_callback(void* o) {
     clock_phase = 1;
     ticks = (ticks + 1) % 8;
     if (ticks > 3) clock_phase = 0;
-    (*clock_pulse)(clock_phase, ticks);
+    //(*clock_pulse)(clock_phase, ticks);  // FIXME
+    (*clock_pulse)(clock_phase);
   }
 }
 

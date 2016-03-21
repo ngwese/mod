@@ -66,8 +66,8 @@ CSRCS = \
        ../skeleton/adc.c     \
        ../skeleton/events.c     \
        ../skeleton/i2c.c \
-       ../skeleton/init.c \
-       ../skeleton/interrupts.c \
+       ../skeleton/init_trilogy.c \
+       ../skeleton/init_common.c \
        ../skeleton/monome.c \
        ../skeleton/timers.c \
        ../skeleton/usb.c \
@@ -76,6 +76,8 @@ CSRCS = \
        ../skeleton/usb/ftdi/uhi_ftdi.c \
        ../skeleton/usb/hid/hid.c \
        ../skeleton/usb/hid/uhi_hid.c \
+       ../skeleton/usb/midi/uhi_midi.c \
+       ../skeleton/usb/midi/midi.c \
        avr32/drivers/adc/adc.c                            \
        avr32/drivers/flashc/flashc.c                      \
        avr32/drivers/gpio/gpio.c                          \
@@ -89,6 +91,8 @@ CSRCS = \
        avr32/drivers/usart/usart.c                        \
        avr32/drivers/usbb/usbb_host.c                     \
        avr32/utils/debug/print_funcs.c                    \
+       common/services/usb/class/msc/host/uhi_msc.c       \
+       common/services/usb/class/msc/host/uhi_msc_mem.c   \
        common/services/spi/uc3_spi/spi_master.c \
        common/services/usb/uhc/uhc.c \
        common/services/clock/uc3b0_b1/sysclk.c  
@@ -98,15 +102,16 @@ ASSRCS = \
        avr32/utils/startup/trampoline_uc3.S               \
        avr32/drivers/intc/exception.S                     \
               
-
 # List of include paths.
 INC_PATH = \
        ../$(THIS)           \
        ../skeleton                                        \
        ../skeleton/conf      \
+       ../skeleton/conf/trilogy \
        ../skeleton/usb \
        ../skeleton/usb/ftdi \
        ../skeleton/usb/hid \
+       ../skeleton/usb/midi \
        ../teletype \
        avr32/boards                                       \
        avr32/drivers/cpu/cycle_counter                    \
@@ -129,6 +134,8 @@ INC_PATH = \
        common/services/delay                              \
        common/services/usb/ \
        common/services/usb/uhc \
+       common/services/usb/class/msc                      \
+       common/services/usb/class/msc/host                 \
        common/services/usb/class/hid                      \
        common/services/spi/uc3_spi \
        common/utils                                       

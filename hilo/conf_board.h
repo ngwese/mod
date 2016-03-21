@@ -148,8 +148,6 @@
 #define DAC_SPI 0
 #define ADC_SPI 1
 
-
-
  //TWI
 #define TWI 					(&AVR32_TWI)
 #define TWI_DATA_PIN			AVR32_TWI_SDA_0_0_PIN
@@ -157,9 +155,7 @@
 #define TWI_CLOCK_PIN           AVR32_TWI_SCL_0_0_PIN
 #define TWI_CLOCK_FUNCTION  	AVR32_TWI_SCL_0_0_FUNCTION
 #define TWI_SPEED				50000
-//#define TWI_SPEED 50000;
-// #define TWI_SPEED 132000;
 
-
+#define MOD_TRILOGY
 
 #endif // CONF_BOARD_H
